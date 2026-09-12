@@ -1,6 +1,6 @@
 # ADR-017: Adjust positions only after a trade was placed
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -119,4 +119,12 @@ A position changes only when a trade was placed. Concretely:
 
 ## Implementation Status
 
-Not started.
+Implemented on 2026-09-12. The four sell sites change a position only after
+`safe_sell` returned a price: prune records `SKIP:no_price` with a WARNING
+naming the symbol and the reasons; resize leaves the quantity and records
+`SKIP:not_placed`; raise-cash moves on to the next holding; the kill switch
+keeps what it could not sell, writes it to `next_portfolio.csv` and ends
+with a WARNING listing the names and a count of what remains. Four pipeline
+tests cover a missing price in each path: the position survives, no ledger
+row is written, cash is unchanged. Plan step 2 passed: 192 tests, the golden
+test's expected files untouched.

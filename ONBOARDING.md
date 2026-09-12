@@ -139,7 +139,10 @@ A holding is sold when any of these hold:
   rolling maximum close.
 
 Sold symbols go into `ctx.portfolio.sold` and are not bought back in the
-same run. If the ranking is empty the prune step is skipped
+same run. A holding that should be sold but cannot be priced (no quote, no
+last price) stays exactly as it was, with a WARNING and a `SKIP:no_price`
+row in `exits.csv`: a position changes only when a trade was placed, in
+every path (ADR-017). If the ranking is empty the prune step is skipped
 entirely, as a guard against liquidating everything on a bad data day.
 
 ### Sizing (steps 9 and 11)

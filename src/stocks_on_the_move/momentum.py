@@ -711,10 +711,18 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
         pct = (idx[sym] + 1) / total if sym in idx else 1.0
         check = exit_reasons(ctx, rank, pct)
         price = None
+        decision = "HOLD"
         if check.sell:
             price = safe_sell(ctx, sym, qty)
-            pf.positions.pop(sym)
-            pf.sold.add(sym)
+            if price is None:  # nothing was sent, so nothing changes (ADR-017)
+                logger.warning(
+                    "%s: exit wanted (%s) but no price came back; the holding stays", sym, ";".join(check.reasons)
+                )
+                decision = "SKIP:no_price"
+            else:
+                pf.positions.pop(sym)
+                pf.sold.add(sym)
+                decision = "SELL"
         rows.append(
             {
                 "symbol": sym,
@@ -725,7 +733,7 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
                 "ema100": rank.ema100 if rank else None,
                 "stop_level": check.stop_level,
                 "reasons": ";".join(check.reasons),
-                "decision": "SELL" if check.sell else "HOLD",
+                "decision": decision,
                 "price": price,
             }
         )
@@ -781,8 +789,9 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
 
     # 1️⃣ sell downs first
     for sym, delta in to_down.items():
-        if safe_sell(ctx, sym, delta) is None:
+        if safe_sell(ctx, sym, delta) is None:  # nothing was sent, so the quantity stays (ADR-017)
             rows[sym]["action"] = "SKIP:not_placed"
+            continue
         pf.positions[sym] -= delta
         if pf.positions[sym] == 0:
             pf.positions.pop(sym)
@@ -842,10 +851,15 @@ def liquidate_all(ctx: RunContext) -> None:
     """KILL SWITCH: sell every position in the portfolio."""
     pf = ctx.portfolio
     logger.warning("KILL SWITCH activated – liquidating all %d positions", len(pf.positions))
+    unsold: list[str] = []
     for sym, qty in list(pf.positions.items()):
-        safe_sell(ctx, sym, qty)
+        if safe_sell(ctx, sym, qty) is None:  # nothing was sent, so the holding stays (ADR-017)
+            unsold.append(sym)
+            continue
         pf.positions.pop(sym)
-    logger.warning("KILL SWITCH complete – portfolio empty, cash: %.2f", pf.cash)
+    if unsold:
+        logger.warning("KILL SWITCH could not sell %d position(s), still held: %s", len(unsold), ", ".join(unsold))
+    logger.warning("KILL SWITCH complete – %d position(s) remain, cash: %.2f", len(pf.positions), pf.cash)
 
 
 def raise_cash_if_needed(ctx: RunContext, ranks: list[RankItem]) -> None:
@@ -874,7 +888,8 @@ def raise_cash_if_needed(ctx: RunContext, ranks: list[RankItem]) -> None:
         sell_qty = min(qty, int(math.ceil(need / per_share)))
         if sell_qty <= 0:
             continue
-        safe_sell(ctx, sym, sell_qty)
+        if safe_sell(ctx, sym, sell_qty) is None:  # nothing was sent, so the holding stays (ADR-017)
+            continue
         pf.positions[sym] -= sell_qty
         if pf.positions[sym] == 0:
             pf.positions.pop(sym)
