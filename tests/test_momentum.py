@@ -74,7 +74,7 @@ def test_atr_constant_range():
 
 
 def test_composite_momentum_perfect_log_linear_uptrend():
-    n = max(m.LOOKBACK_R126, m.REG_LOOKBACK) + 10
+    n = max(m.LOOKBACK_LONG, m.REG_LOOKBACK) + 10
     closes = pd.Series(100.0 * np.exp(0.001 * np.arange(n)))  # exactly 0.1 %/day in log space
     score, ann, r2 = m._composite_momentum(closes)
     assert r2 == pytest.approx(1.0)

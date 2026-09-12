@@ -53,9 +53,15 @@ MIN_SHARES = 1
 # scoring & filters
 MA_PERIOD_200 = 200
 MA_FILTER_100: int = 100
-LOOKBACK_R21 = 5
-LOOKBACK_R63 = 15
-LOOKBACK_R126 = 45
+# Momentum lookbacks in trading days and their weights in the composite score (ADR-016).
+# Shortened from the book's 21/63/126 before version control, for a reason nobody recorded;
+# changing them again is a strategy ADR with the golden test (ADR-009) as its evidence.
+LOOKBACK_SHORT = 5
+LOOKBACK_MID = 15
+LOOKBACK_LONG = 45
+WEIGHT_SHORT = 0.6
+WEIGHT_MID = 0.3
+WEIGHT_LONG = 0.1
 REG_LOOKBACK = 90
 
 TRADING_DAYS_YR = 250
@@ -408,17 +414,20 @@ def annualise(slope_day: float) -> float:
 def _composite_momentum(closes: pd.Series):
     """Return (score, annual_slope, r2) or (nan, nan, nan) if insufficient data.
 
-    score = (R21 + R63 + R126) × R²(90d)
+    score = (0.6·R5 + 0.3·R15 + 0.1·R45) × R²(90d): a weighted sum of the simple
+    returns over LOOKBACK_SHORT, LOOKBACK_MID and LOOKBACK_LONG trading days, scaled
+    by the R² of a log-linear fit over REG_LOOKBACK days. annual_slope is that fit's
+    slope annualised.
     """
-    need = max(LOOKBACK_R126, REG_LOOKBACK) + 1
+    need = max(LOOKBACK_LONG, REG_LOOKBACK) + 1
     if len(closes) < need:
         return math.nan, math.nan, math.nan
 
     last = float(closes.iloc[-1])
-    r21 = (last / float(closes.iloc[-(LOOKBACK_R21 + 1)])) - 1.0
-    r63 = (last / float(closes.iloc[-(LOOKBACK_R63 + 1)])) - 1.0
-    r126 = (last / float(closes.iloc[-(LOOKBACK_R126 + 1)])) - 1.0
-    comp = 0.6 * r21 + 0.3 * r63 + 0.1 * r126
+    r_short = (last / float(closes.iloc[-(LOOKBACK_SHORT + 1)])) - 1.0
+    r_mid = (last / float(closes.iloc[-(LOOKBACK_MID + 1)])) - 1.0
+    r_long = (last / float(closes.iloc[-(LOOKBACK_LONG + 1)])) - 1.0
+    comp = WEIGHT_SHORT * r_short + WEIGHT_MID * r_mid + WEIGHT_LONG * r_long
 
     y = np.log(closes.iloc[-REG_LOOKBACK:])
     x = np.arange(len(y), dtype=float)
@@ -431,7 +440,7 @@ def _composite_momentum(closes: pd.Series):
     return comp * r2, annualise(float(slope)), float(r2)
 
 
-MIN_HISTORY = max(MA_FILTER_100, LOOKBACK_R126 + 1, REG_LOOKBACK + 1)
+MIN_HISTORY = max(MA_FILTER_100, LOOKBACK_LONG + 1, REG_LOOKBACK + 1)
 
 
 @dataclass(frozen=True)
@@ -624,7 +633,7 @@ def _trailing_stop(ctx: RunContext, sym: str) -> tuple[bool, float | None]:
     """(hit, stop level) for the n×ATR trailing stop under the rolling high close."""
     s = ctx.settings
     tok = token_of(ctx, sym, "NSE")
-    look = max(s.atr_period, LOOKBACK_R126)
+    look = max(s.atr_period, LOOKBACK_LONG)
     df = ctx.candles.get(tok, look)
     if len(df) < s.atr_period + 1:
         logger.warning("Not enough candles for trailing stop")

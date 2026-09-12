@@ -1,6 +1,6 @@
 # ADR-016: Name the momentum lookbacks and weights for what they are
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -110,4 +110,7 @@ ADR; this one only makes the code say what it does.
 
 ## Implementation Status
 
-Not started.
+Implemented on 2026-09-12. Constants, weights, locals, docstring, `MIN_HISTORY`,
+the trailing-stop window, the test and the onboarding guide renamed; no value
+changed. Plan step 2 passed: 192 tests, the golden test's expected files
+untouched, so the score is byte-for-byte what it was.

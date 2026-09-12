@@ -20,7 +20,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-013](ADR-013-automated-dependency-refresh.md) | Automated dependency refresh with Dependabot | Implemented | 2026-09-12 |
 | [ADR-014](ADR-014-claude-md-assistant-contract.md) | A CLAUDE.md contract for coding assistants | Implemented | 2026-09-12 |
 | [ADR-015](ADR-015-log-level-and-per-run-log-file.md) | LOG_LEVEL, logging configured at entry, and a log file per run | Implemented | 2026-09-12 |
-| [ADR-016](ADR-016-rename-the-momentum-lookbacks.md) | Name the momentum lookbacks and weights for what they are | Proposed | 2026-09-12 |
+| [ADR-016](ADR-016-rename-the-momentum-lookbacks.md) | Name the momentum lookbacks and weights for what they are | Implemented | 2026-09-12 |
 | [ADR-017](ADR-017-adjust-positions-only-after-a-placed-trade.md) | Adjust positions only after a trade was placed | Proposed | 2026-09-12 |
 | [ADR-018](ADR-018-end-the-candle-window-on-the-ist-date.md) | End the candle window on the IST date | Proposed | 2026-09-12 |
 

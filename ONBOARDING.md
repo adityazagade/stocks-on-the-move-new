@@ -33,17 +33,17 @@ Where this port deviates from the book, and it matters when you read the code:
   It is a weighted blend of trailing returns, `0.6*R5 + 0.3*R15 + 0.1*R45`,
   multiplied by the R² of a 90-day log-linear fit. The annualised slope is
   computed and logged but does not affect the order.
-- The lookbacks are 5, 15 and 45 trading days. The constants are still named
-  `LOOKBACK_R21`, `LOOKBACK_R63`, `LOOKBACK_R126` and the docstring still
-  says "R21 + R63 + R126": the values were shortened in the last iteration
-  (v3 to v4) and the names were not. Trust the values.
+- The lookbacks are 5, 15 and 45 trading days (`LOOKBACK_SHORT/MID/LONG`,
+  weights `WEIGHT_SHORT/MID/LONG`), shortened from the book's 21/63/126 before
+  version control for a reason nobody recorded. Changing them again is a
+  strategy ADR with the golden test as its evidence (ADR-016).
 - Regime and trend filters use EMAs where the book uses simple moving averages.
 
 ## 2. Your first hour
 
 ```sh
 uv sync                      # Python 3.13 + all deps into .venv
-uv run pytest                # 13 tests, well under a second
+uv run pytest                # the whole suite, a few seconds
 uv run pre-commit install    # hooks: ruff, uv-lock, whitespace
 cp .env.example .env         # add KITE_API_KEY / KITE_API_SECRET
 ```
@@ -117,7 +117,7 @@ A stock is ranked only if it passes all of these, in order:
 
 1. Kite lists it as `instrument_type == "EQ"` in segment `NSE` and its base
    symbol is in the NIFTY 500 list.
-2. Enough daily candles: `max(MA_FILTER_100, LOOKBACK_R126 + 1, REG_LOOKBACK + 1)` rows.
+2. Enough daily candles: `max(MA_FILTER_100, LOOKBACK_LONG + 1, REG_LOOKBACK + 1)` rows.
 3. Last close above the 100-day EMA.
 4. 20-day average volume at least `MIN_VOLUME`.
 5. ATR(20) no more than `MAX_ATR_PCT` of price.
