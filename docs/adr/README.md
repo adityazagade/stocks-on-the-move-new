@@ -31,7 +31,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-024](ADR-024-simple-moving-averages-for-regime-and-trend.md) | Simple moving averages for the regime and trend filters | Implemented | 2026-09-12 |
 | [ADR-025](ADR-025-the-gap-filter.md) | Exclude names with a daily move above 15 percent in the last 90 days | Implemented | 2026-09-12 |
 | [ADR-026](ADR-026-a-minimum-size-for-a-new-position.md) | A minimum size for a new position | Implemented | 2026-09-12 |
-| [ADR-027](ADR-027-resize-on-elapsed-time-not-iso-week-parity.md) | Resize on elapsed time since the last resize, not ISO-week parity | Proposed | 2026-09-12 |
+| [ADR-027](ADR-027-resize-on-elapsed-time-not-iso-week-parity.md) | Resize on elapsed time since the last resize, not ISO-week parity | Implemented | 2026-09-12 |
 | [ADR-028](ADR-028-rank-by-the-regression-slope.md) | Rank by the book's regression slope, on backtest evidence | Proposed | 2026-09-12 |
 
 ## Writing a new ADR

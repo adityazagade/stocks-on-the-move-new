@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from stocks_on_the_move.execution import Executor
     from stocks_on_the_move.universe import UniverseSource
 
-# Timezone: run scheduling and biweekly parity in IST
+# Timezone: run scheduling and the rebalance cadence in IST
 IST = ZoneInfo("Asia/Kolkata")
 
 

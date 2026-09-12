@@ -1,4 +1,4 @@
-"""The four state files: the portfolio snapshot, the cash ledger and the trades ledger (ADR-004, ADR-020).
+"""The five state files: the portfolio snapshot, the two ledgers and the strategy state (ADR-004, ADR-020, ADR-027).
 
 Cash is never stored; it is reconstructed from the ledgers on every run. A
 trade reaches the ledger only through ``record_trade``.
@@ -7,9 +7,11 @@ trade reaches the ledger only through ``record_trade``.
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 
 from stocks_on_the_move.context import RunContext
@@ -150,3 +152,38 @@ def record_trade(ctx: RunContext, side: str, symbol: str, qty: int, price: float
     ctx.portfolio.trades.append(dict(zip(TRADE_COLUMNS, values, strict=True)))
     ctx.artifacts.write_table("trades", TRADE_COLUMNS, ctx.portfolio.trades)
     return cash_delta
+
+
+# ── the strategy's own state (ADR-027) ───────────────────────────────────
+def load_state(path: str) -> dict[str, Any]:
+    """``strategy_state.json`` as a dict; empty when the file is missing, with a WARNING when it is unreadable."""
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path) as f:
+            state = json.load(f)
+    except (OSError, ValueError) as exc:
+        logger.warning("Ignoring the state file %s: %s", path, exc)
+        return {}
+    if not isinstance(state, dict):
+        logger.warning("Ignoring the state file %s: not an object", path)
+        return {}
+    return state
+
+
+def save_state(path: str, state: dict[str, Any]) -> None:
+    with open(path, "w") as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def last_resize_date(state: dict[str, Any]) -> date | None:
+    """The date of the last size rebalance the state records, or ``None``."""
+    raw = state.get("last_resize_date")
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(str(raw))
+    except ValueError:
+        logger.warning("Ignoring last_resize_date %r: not a date", raw)
+        return None

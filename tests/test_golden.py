@@ -89,6 +89,10 @@ def test_pipeline_matches_the_golden_files(config, tmp_path, make_settings, upda
     account.mkdir()
     for name in ("portfolio_before.csv", "cash_ledger.csv", "trades_ledger.csv"):
         shutil.copy(GOLDEN / name, account / name)  # the run appends to the ledgers; never touch the fixtures
+    # the last rebalance the run finds on record: fourteen days ago in one config, seven in the other (ADR-027)
+    (account / "strategy_state.json").write_text(
+        json.dumps({"last_resize_date": meta["configs"][config]["last_resize_date"]}) + "\n"
+    )
 
     settings = make_settings(
         **meta["settings"],
@@ -96,6 +100,7 @@ def test_pipeline_matches_the_golden_files(config, tmp_path, make_settings, upda
         out_file=str(account / "next_portfolio.csv"),
         cash_ledger_file=str(account / "cash_ledger.csv"),
         trades_ledger_file=str(account / "trades_ledger.csv"),
+        state_file=str(account / "strategy_state.json"),
         cache_dir=tmp_path / "candles",
         runs_dir=tmp_path / "runs",
     )

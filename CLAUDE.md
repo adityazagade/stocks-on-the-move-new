@@ -20,7 +20,8 @@ it disagrees with an Accepted ADR, the ADR wins and this file is fixed.
 3. **pandas stays below 3.0** until an ADR moves the bound on the strength of
    the golden test (ADR-003, ADR-009). Do not merge a bot PR that widens it.
 4. **Never commit `.env`, a Kite access token, or anything under `runs/`.**
-   The rule: state the code reads to run (the four ledgers) is versioned;
+   The rule: state the code reads to run (the four ledgers and
+   `strategy_state.json`, ADR-027) is versioned;
    diagnostics it produces are not (ADR-004, ADR-005, ADR-006).
 5. **Paper mode writes real files.** `ALLOW_KITE_EXECUTION=0` still appends
    to the trades ledger and rewrites `next_portfolio.csv`. Point

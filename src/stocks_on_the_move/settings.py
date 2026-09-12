@@ -64,7 +64,9 @@ class Settings(BaseSettings):
         True, description="0 = paper mode: run the whole pipeline and write the ledgers, but send no orders."
     )
     kill_switch: bool = Field(False, description="1 = liquidate everything and exit, ignoring the weekday guard.")
-    force_resize: bool = Field(False, description="1 = rebalance position sizes even on an odd ISO week.")
+    force_resize: bool = Field(
+        False, description="1 = rebalance position sizes even when the last rebalance was under 12 days ago."
+    )
     plan_only: bool = Field(
         False,
         description=(
@@ -162,6 +164,10 @@ class Settings(BaseSettings):
     out_file: str = Field("next_portfolio.csv", description="Positions after the run.")
     cash_ledger_file: str = Field("cash_ledger.csv", description="Deposits and withdrawals: date, amount, note.")
     trades_ledger_file: str = Field("trades_ledger.csv", description="Every placed or paper trade and its cash effect.")
+    state_file: str = Field(
+        "strategy_state.json",
+        description="The run's own state (ADR-027): the date of the last size rebalance. Versioned like the ledgers.",
+    )
     cache_dir: Path = Field(Path(".cache_candles"), description="Per-instrument daily-candle cache; regenerable.")
     runs_dir: Path = Field(
         Path("runs"),
@@ -264,7 +270,10 @@ EXAMPLE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Order confirmation (ADR-019)", ("fill_timeout_seconds", "fill_poll_seconds")),
     ("Kite rate limiting", ("kite_rps", "kite_max_retries", "candle_sleep_sec")),
     ("Logging", ("log_level",)),
-    ("Files", ("portfolio_file", "out_file", "cash_ledger_file", "trades_ledger_file", "cache_dir", "runs_dir")),
+    (
+        "Files",
+        ("portfolio_file", "out_file", "cash_ledger_file", "trades_ledger_file", "state_file", "cache_dir", "runs_dir"),
+    ),
 )
 
 EXAMPLE_HEADER = """\

@@ -1,8 +1,8 @@
 # ADR-027: Resize on elapsed time since the last resize, not ISO-week parity
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
-- **Last Updated**: 2026-09-12
+- **Last Updated**: 2026-09-13
 - **Author**: Aditya Zagade
 
 ## Context
@@ -135,4 +135,26 @@ Weeks since a chosen Wednesday, modulo two.
 
 ## Implementation Status
 
-Proposed; nothing implemented.
+Implemented on 2026-09-13, one pull request, golden expected files untouched.
+
+- `STATE_FILE` (default `strategy_state.json`) in the files settings;
+  `load_state`, `save_state` and `last_resize_date` in `ledger.py`; an
+  unreadable file is a WARNING and counts as no record.
+- `resize_positions` is due when the state records no rebalance, or one at
+  least `resize_after_days` (12, on `StrategyParams`) before the run date,
+  or when `FORCE_RESIZE` is set. It writes the run date back when it
+  rebalanced, before the trades, so a crash mid-rebalance still records
+  it; other keys in the file survive. A plan reads and does not write.
+  `run.json` carries `last_resize_date_before` and `_after`.
+- The backtest harness carries the date between run dates in its own
+  state file, so a replay follows this cadence from the first date.
+- The golden fixtures gain `last_resize_date` per configuration in
+  `meta.json`, fourteen days before one run date and seven before the
+  other, which reproduces the parity the configurations were built on; the
+  expected files did not move.
+- `strategy_state.json` is seeded in the repository with 2026-09-02, the
+  last even-week Wednesday before this landed, so the first run on
+  2026-09-16 rebalances as parity would have.
+- `CLAUDE.md` rule 4, the onboarding guide's first section, the pipeline
+  table, the scheduling paragraph, the file lifecycle and the glossary name
+  the fifth file and the cadence.
