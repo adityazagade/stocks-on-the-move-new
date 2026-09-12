@@ -29,7 +29,7 @@ import math
 import os
 import time
 from collections import namedtuple
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -40,7 +40,7 @@ import pandas as pd
 
 from stocks_on_the_move import kite_auth
 from stocks_on_the_move.artifacts import Artifacts, NoArtifacts, RunArtifacts
-from stocks_on_the_move.broker import Broker, Instrument, KiteBroker, Order, OrderType, PaperBroker
+from stocks_on_the_move.broker import Broker, Instrument, KiteBroker, Order, OrderType, PaperBroker, Side
 from stocks_on_the_move.candles import CandleStore
 from stocks_on_the_move.settings import Settings, SettingsError
 
@@ -178,7 +178,7 @@ def _ensure_csv(path: str, header: list[str]) -> None:
             csv.writer(f).writerow(header)
 
 
-def _append_row(path: str, row: list[str | float | int]) -> None:
+def _append_row(path: str, row: Sequence[Any]) -> None:
     with open(path, "a", newline="") as f:
         csv.writer(f).writerow(row)
 
@@ -470,33 +470,39 @@ def evaluate_instrument(ctx: RunContext, inst: Instrument) -> Evaluation:
     """
     s = ctx.settings
     sym, tok = inst.tradingsymbol, inst.token
-    metrics: dict[str, float] = {}
+    last: float | None = None
+    ema100: float | None = None
+    avg_vol_20: float | None = None
+    atr_value: float | None = None
+    atr_pct: float | None = None
+
+    def verdict(*, rank: RankItem | None = None, reason: str | None = None) -> Evaluation:
+        return Evaluation(sym, tok, rank, reason, last, ema100, avg_vol_20, atr_value, atr_pct)
+
     try:
         df = ctx.candles.get(tok, MIN_HISTORY)
         if df.empty or len(df) < MIN_HISTORY:
-            return Evaluation(sym, tok, reason="history")
+            return verdict(reason="history")
         closes, vols = df["close"], df["volume"]
         ema100 = float(pd.Series(closes).ewm(span=MA_FILTER_100, adjust=False).mean().iloc[-1])
         last = float(closes.iloc[-1])
-        metrics.update(last=last, ema100=ema100)
         if last <= ema100:
-            return Evaluation(sym, tok, reason="below_ema100", **metrics)
-        metrics["avg_vol_20"] = float(vols.iloc[-20:].mean())
-        if metrics["avg_vol_20"] < s.min_volume:
-            return Evaluation(sym, tok, reason="volume", **metrics)
-        _atr = atr(df, s.atr_period)
-        metrics.update(atr=_atr, atr_pct=_atr / last if last > 0 else math.nan)
-        if math.isnan(_atr) or (last > 0 and _atr / last > s.max_atr_pct):
-            return Evaluation(sym, tok, reason="atr_pct", **metrics)
+            return verdict(reason="below_ema100")
+        avg_vol_20 = float(vols.iloc[-20:].mean())
+        if avg_vol_20 < s.min_volume:
+            return verdict(reason="volume")
+        atr_value = atr(df, s.atr_period)
+        atr_pct = atr_value / last if last > 0 else math.nan
+        if math.isnan(atr_value) or (last > 0 and atr_value / last > s.max_atr_pct):
+            return verdict(reason="atr_pct")
         score, ann_slope, r2 = _composite_momentum(closes)
         if math.isnan(score):
             logger.warning("Not enough data to rank for %s", sym)
-            return Evaluation(sym, tok, reason="insufficient_data", **metrics)
-        item = RankItem(sym, float(score), float(ann_slope), float(r2), last, ema100)
-        return Evaluation(sym, tok, rank=item, **metrics)
+            return verdict(reason="insufficient_data")
+        return verdict(rank=RankItem(sym, float(score), float(ann_slope), float(r2), last, ema100))
     except Exception as exc:
         logger.debug("%s skipped – %s", sym, exc)
-        return Evaluation(sym, tok, reason=f"error:{type(exc).__name__}", **metrics)
+        return verdict(reason=f"error:{type(exc).__name__}")
 
 
 def rank_universe(ctx: RunContext, universe: Iterable[Instrument]) -> list[RankItem]:
@@ -562,7 +568,7 @@ _TRADE_LINE = {
 }
 
 
-def _price_for(ctx: RunContext, sym: str, side: str) -> tuple[float, OrderType]:
+def _price_for(ctx: RunContext, sym: str, side: Side) -> tuple[float, OrderType]:
     """The price a trade is booked at, and the order type that implies.
 
     Series without market orders (BE, BZ, ...) get a LIMIT at the top of the
@@ -577,9 +583,9 @@ def _price_for(ctx: RunContext, sym: str, side: str) -> tuple[float, OrderType]:
     return ltp_map(ctx.broker, [sym]).get(sym, 0.0), "MARKET"
 
 
-def _place(ctx: RunContext, sym: str, side: str, qty: int, price: float, order_type: OrderType) -> None:
+def _place(ctx: RunContext, sym: str, side: Side, qty: int, price: float, order_type: OrderType) -> None:
     limit = price if order_type == "LIMIT" else None
-    ctx.broker.place_order(Order(sym, side, qty, order_type, limit_price=limit))  # type: ignore[arg-type]
+    ctx.broker.place_order(Order(sym, side, qty, order_type, limit_price=limit))
     record_trade(ctx, side, sym, qty, price)
     logger.info(_TRADE_LINE[(ctx.paper, side)], sym, qty, price, ctx.portfolio.cash)
 

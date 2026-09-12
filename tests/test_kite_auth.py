@@ -251,14 +251,16 @@ class FakeKite:
 NOW = ist(2026, 9, 16, 10)
 
 
-def _settings(tmp_path, **overrides) -> ka.AuthSettings:
-    defaults = {
-        "session_file": tmp_path / "kite_session.json",
-        "redirect_port": 0,
-        "open_browser": False,
-        "login_timeout": 5.0,
-    }
-    return ka.AuthSettings(**{**defaults, **overrides})
+def _settings(
+    tmp_path, *, redirect_port: int = 0, forget_session: bool = False, login_timeout: float = 5.0
+) -> ka.AuthSettings:
+    return ka.AuthSettings(
+        session_file=tmp_path / "kite_session.json",
+        redirect_port=redirect_port,
+        open_browser=False,
+        forget_session=forget_session,
+        login_timeout=login_timeout,
+    )
 
 
 def _authenticate(fake: FakeKite, settings: ka.AuthSettings, stdin) -> FakeKite:

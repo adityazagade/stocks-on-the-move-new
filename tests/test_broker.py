@@ -100,7 +100,7 @@ def test_order_validates_its_own_invariants():
     Order("TCS", "BUY", 1, "MARKET")
     Order("TCS", "SELL", 1, "LIMIT", limit_price=10.0)
     with pytest.raises(ValueError, match="side"):
-        Order("TCS", "HOLD", 1, "MARKET")  # type: ignore[arg-type]
+        Order("TCS", "HOLD", 1, "MARKET")  # ty: ignore[invalid-argument-type]  (the point of the test)
     with pytest.raises(ValueError, match="quantity"):
         Order("TCS", "BUY", 0, "MARKET")
     with pytest.raises(ValueError, match="LIMIT"):

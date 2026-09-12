@@ -184,8 +184,8 @@ class _RedirectHandler(BaseHTTPRequestHandler):
     def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
         logger.debug("redirect listener: %s %s -> %s", self.command, urlsplit(self.path).path, code)
 
-    def log_message(self, fmt: str, *args: Any) -> None:
-        logger.debug("redirect listener: " + fmt, *args)
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002  (name fixed by the base class)
+        logger.debug("redirect listener: " + format, *args)
 
 
 class RedirectListener(HTTPServer):
@@ -205,7 +205,9 @@ class RedirectListener(HTTPServer):
     def server_bind(self) -> None:
         # HTTPServer.server_bind resolves the host with getfqdn(), which can stall on DNS.
         socketserver.TCPServer.server_bind(self)
-        self.server_name, self.server_port = self.server_address[:2]
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
 
     @property
     def port(self) -> int:
@@ -297,7 +299,8 @@ def wait_for_request_token(
             break
         step = min(_POLL_SEC, remaining)
         if stdin is None:
-            listener.wait(step)  # type: ignore[union-attr]  (listener is not None here)
+            if listener is not None:  # the loop guard above guarantees it; the checker cannot see that
+                listener.wait(step)
             continue
         line = _readline_within(stdin, step)
         if line is None:
@@ -393,7 +396,7 @@ def authenticate(
     api_secret: str,
     *,
     settings: AuthSettings,
-    kite_factory: Callable[..., KiteConnect] = KiteConnect,
+    kite_factory: Callable[..., Any] = KiteConnect,  # tests pass a fake
     call: Callable[..., Any] = _direct_call,
     now: Callable[[], datetime] = ist_now,
     stdin: IO[str] | None = None,

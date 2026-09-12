@@ -1,6 +1,6 @@
 # ADR-011: Continuous integration on GitHub Actions
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -136,8 +136,11 @@ workflow needs no secrets.
 
 ## Implementation Status
 
-Code complete on 2026-09-12; awaiting plan step 2, which needs the workflow
-on GitHub.
+Implemented on 2026-09-12. Plan step 2 passed the same day: pull request #5
+green on all three jobs; `main` green at `c0d48cb` after the merge; scratch
+pull request #6 (unused import) red on `pre-commit hooks` with both `pytest`
+jobs green; scratch pull request #7 (bound edited without relocking) red on
+every job at `uv sync --locked`. Both scratch branches deleted.
 
 - Step 1 landed as `.github/workflows/ci.yml` with the two jobs as decided:
   `checks` (Python 3.13, `uv sync --locked --all-groups`,
@@ -151,11 +154,9 @@ on GitHub.
   guide's tooling paragraph mentions CI.
 - The 3.12 promise was exercised locally before the first push: the full
   suite (178 tests) passes on CPython 3.12.14 from a `--locked` sync.
-- Step 2 is outstanding and happens with the pull request that carries this
-  ADR: both jobs must go green there and on `main` after the merge. Then, on
-  a scratch branch with a draft pull request, a deliberate ruff violation
-  must fail `checks` and a deliberate `uv.lock` drift must fail `tests`;
-  the branch is deleted afterwards. Status moves to Implemented after that.
+- Step 2 as decided: green on the pull request and on `main`, then the two
+  deliberate failures shown red on scratch branches under draft pull
+  requests, then the branches deleted. Results above.
 
 ## Notes
 
