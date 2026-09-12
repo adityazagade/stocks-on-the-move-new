@@ -192,6 +192,10 @@ which the fixed slippage here understates the value of, is worth 1.45
 points of drawdown is a judgment, and the natural next ADR: propose C with
 a gate of its own, written before any further runs.
 
+**One more figure.** The blend opened 1,606 new positions over the range's
+4.2 years for about nineteen slots: an average holding of two and a half
+weeks. The strategy the book describes holds for months.
+
 **Caveats** are the harness's (ADR-023): survivorship bias flatters all
 three alike; fills at the close with fixed slippage flatter the highest
 turnover most, so the blend's edge here is, if anything, overstated

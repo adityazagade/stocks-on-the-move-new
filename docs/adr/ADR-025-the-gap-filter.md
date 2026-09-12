@@ -151,3 +151,23 @@ regenerated and reviewed.
 - The golden diff is described in the commit body.
 - **Plan step 3**, with and without the rule over the cached history, waits
   for the owner's warm cache (ADR-023 step 6).
+
+## Notes
+
+**Plan step 3, run on 2026-09-13** over the owner's warm cache: 218
+Wednesdays from 2022-07-13 to 2026-09-09, the rule on at its default
+against off (`--set max_gap_pct=1.0`), everything else at the live values.
+
+| Measure | Gap filter on | Gap filter off |
+| --- | --- | --- |
+| CAGR | 18.14 % | 17.07 % |
+| Annualised volatility | 10.07 % | 10.41 % |
+| Return over volatility | 1.800 | 1.639 |
+| Maximum drawdown | -6.49 % | -7.62 % |
+| Trades per year | 963 | 943 |
+| Turnover per year | 21.1× | 19.4× |
+
+The rule improves return, volatility and drawdown together, at two percent
+more trades. The harness's caveats apply (ADR-023): relative comparison
+only. Result directories `runs/backtests/2022-07-13_2026-09-09-blend` and
+`-no-gap`.
