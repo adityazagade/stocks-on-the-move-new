@@ -95,6 +95,9 @@ def test_overrides_are_typed_by_the_field_they_name():
         bt.parse_overrides(["nope=1"], StrategyParams())
     with pytest.raises(ValueError, match="expected int"):
         bt.parse_overrides(["lookback_short=x"], StrategyParams())
+    assert bt.parse_overrides(["score=slope"], StrategyParams()).score == "slope"
+    with pytest.raises(ValueError, match="choose one of blend, slope"):
+        bt.parse_overrides(["score=magic"], StrategyParams())
 
 
 # ── the simulation ───────────────────────────────────────────────────────

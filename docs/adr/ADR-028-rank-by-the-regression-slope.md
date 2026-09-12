@@ -135,4 +135,21 @@ next person who wonders why the score is what it is can read the numbers.
 
 ## Implementation Status
 
-Proposed; awaiting the comparison.
+Proposed; awaiting the comparison (plan step 2), which needs the owner's
+warm cache (ADR-023 step 6).
+
+- On 2026-09-13 the harness gained what the comparison needs and nothing
+  more: `StrategyParams.score`, `"blend"` by default and `"slope"` for the
+  book's score, read by `composite_momentum`; `--set score=slope` selects
+  it, and the override parser now accepts a `Literal` field. A live run is
+  unchanged: the golden expected files did not move.
+- The three runs, over the same range, all other parameters equal:
+
+      python -m stocks_on_the_move.backtest run --from 2022-01-05 --to 2026-09-09 --label blend
+      python -m stocks_on_the_move.backtest run --from 2022-01-05 --to 2026-09-09 --label slope --set score=slope
+      python -m stocks_on_the_move.backtest run --from 2022-01-05 --to 2026-09-09 --label book-lookbacks \
+          --set lookback_short=21 --set lookback_mid=63 --set lookback_long=126
+      python -m stocks_on_the_move.backtest compare blend slope book-lookbacks
+
+  Their summaries go in Notes whatever the outcome; the owner then sets
+  Accepted or Rejected against the gate above.

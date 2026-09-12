@@ -96,6 +96,15 @@ def test_composite_momentum_perfect_log_linear_uptrend():
     assert score > 0
 
 
+def test_the_slope_score_is_the_annualised_slope_times_r2():
+    closes = pd.Series(100.0 * np.exp(0.001 * np.arange(P.score_history + 10)))
+    blend, ann, r2 = composite_momentum(closes, P)
+    slope, ann_again, r2_again = composite_momentum(closes, dataclasses.replace(P, score="slope"))
+    assert (ann_again, r2_again) == (ann, r2)  # the switch changes the score and nothing else
+    assert slope == pytest.approx(ann * r2) and slope != blend
+    assert P.score == "blend"  # the live default
+
+
 def test_composite_momentum_insufficient_data():
     assert all(math.isnan(v) for v in composite_momentum(pd.Series(np.linspace(100, 110, 20)), P))
 

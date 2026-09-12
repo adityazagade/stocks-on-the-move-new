@@ -39,10 +39,12 @@ def annualise(slope_day: float, trading_days_yr: int = 250) -> float:
 def composite_momentum(closes: pd.Series, params: StrategyParams) -> tuple[float, float, float]:
     """Return (score, annual_slope, r2) or (nan, nan, nan) if insufficient data.
 
-    score = (w_short·R_short + w_mid·R_mid + w_long·R_long) × R²(reg_lookback): a
-    weighted sum of the simple returns over the three lookbacks, scaled by the R²
-    of a log-linear fit over ``reg_lookback`` days. annual_slope is that fit's
-    slope annualised.
+    With ``params.score == "blend"``, the code's own score: (w_short·R_short +
+    w_mid·R_mid + w_long·R_long) × R²(reg_lookback), a weighted sum of the simple
+    returns over the three lookbacks scaled by the R² of a log-linear fit over
+    ``reg_lookback`` days. With ``"slope"``, the book's: that fit's slope,
+    annualised, times the same R² (ADR-028). annual_slope and r2 are returned
+    either way.
     """
     if len(closes) < params.score_history:
         return math.nan, math.nan, math.nan
@@ -61,7 +63,9 @@ def composite_momentum(closes: pd.Series, params: StrategyParams) -> tuple[float
     ss_tot = float(((y - y.mean()) ** 2).sum())
     r2 = 1 - ss_res / ss_tot if ss_tot else 0.0
 
-    return comp * r2, annualise(float(slope), params.trading_days_yr), float(r2)
+    annual = annualise(float(slope), params.trading_days_yr)
+    score = comp * r2 if params.score == "blend" else annual * r2
+    return score, annual, float(r2)
 
 
 def _sma(closes: pd.Series, period: int) -> float:

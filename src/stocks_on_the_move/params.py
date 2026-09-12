@@ -13,7 +13,7 @@ the environment.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from stocks_on_the_move.settings import Settings
 
@@ -35,6 +35,10 @@ class StrategyParams:
     weight_mid: float = 0.3
     weight_long: float = 0.1
     reg_lookback: int = 90
+    # Which momentum score ranks the universe: the trailing-return blend the code has always used, or the
+    # book's annualised regression slope times R². The switch exists so the backtest can compare them
+    # (ADR-028); the live run uses the blend until that ADR is Accepted.
+    score: Literal["blend", "slope"] = "blend"
     gap_lookback: int = 90  # trading days the gap filter looks back over (ADR-025)
     trend_ma_period: int = 100  # a stock must close above this simple moving average to be ranked (ADR-024)
     regime_ma_period: int = 200  # the index must close above this simple moving average for buys
