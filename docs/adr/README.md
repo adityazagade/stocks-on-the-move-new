@@ -13,7 +13,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-006](ADR-006-per-run-artifacts.md) | Write per-run artifacts to runs/, outside version control | Accepted | 2026-09-12 |
 | [ADR-007](ADR-007-typed-settings-object.md) | Replace module-level os.getenv calls with a typed settings object | Accepted | 2026-09-12 |
 | [ADR-008](ADR-008-broker-protocol-and-dependency-injection.md) | A Broker protocol, a Kite adapter, and injected dependencies | Accepted | 2026-09-12 |
-| [ADR-011](ADR-011-continuous-integration-on-github-actions.md) | Continuous integration on GitHub Actions | Accepted | 2026-09-12 |
+| [ADR-011](ADR-011-continuous-integration-on-github-actions.md) | Continuous integration on GitHub Actions | Implemented | 2026-09-12 |
 
 ## Writing a new ADR
 
