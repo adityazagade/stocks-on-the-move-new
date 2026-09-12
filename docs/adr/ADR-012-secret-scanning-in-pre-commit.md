@@ -1,6 +1,6 @@
 # ADR-012: Secret scanning in pre-commit and CI
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -138,8 +138,13 @@ Add secret scanning to the pre-commit configuration, and therefore to CI
 
 ## Implementation Status
 
-Code complete on 2026-09-12; awaiting the CI half of the validation in the
-pull request.
+Implemented on 2026-09-12. The CI half of the validation passed the same
+day: pull request #11 ran green with the new secret-scan step; scratch pull
+request #12, whose commit carried `KITE_API_SECRET=abcdefgh12345678` pushed
+past the local hook with `--no-verify`, went red on that step with the
+rule, file and fingerprint named and the value absent from the log, while
+both `pytest` jobs stayed green; `main` is green after the merge
+(`c64bcf7`). The scratch branch is deleted.
 
 - **Step 1, adopt.** `gitleaks/gitleaks` at `v8.30.1` (hook id `gitleaks`)
   and `detect-private-key` in `.pre-commit-config.yaml`; `.gitleaks.toml`
@@ -170,7 +175,7 @@ pull request.
   `checks` job therefore also runs `gitleaks/gitleaks-action` (v3.0.0,
   pinned by SHA) over the pushed commits with the same `.gitleaks.toml`, the
   same gitleaks version and PR comments off so the job keeps
-  `contents: read`. Its first run happens with this pull request.
+  `contents: read`. Results of its first runs above.
 
 ## Notes
 
