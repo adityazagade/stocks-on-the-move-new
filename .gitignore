@@ -16,6 +16,11 @@ wheels/
 # Secrets (copy .env.example -> .env)
 .env
 
+# Kite access token cached by the run (ADR-005). It lives under ~/.config by default;
+# these patterns guard against KITE_SESSION_FILE being pointed into the tree.
+kite_session.json
+.kite_session*.json
+
 # Candle cache written by the strategy (thousands of CSVs, fully regenerable)
 .cache_candles/
 

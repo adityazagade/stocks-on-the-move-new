@@ -32,8 +32,13 @@ uv run --env-file .env stocks-on-the-move
 
 `uv run python -m stocks_on_the_move` is equivalent. A run only proceeds on
 the configured trading weekday (`TRADING_WEEKDAY`, default Wednesday, IST) and
-exits immediately otherwise. It prints a Kite login URL and waits for you to
-paste the request token.
+exits immediately otherwise. The first run of the day prints a Kite login URL,
+opens it in your browser and waits for Kite to redirect to
+`http://127.0.0.1:8765/`, which must be the redirect URL of your app in the
+Kite developer console; if it is not, paste the request token or the
+redirected URL at the prompt. The session is cached under
+`~/.config/stocks-on-the-move/` until 06:00 IST, so later runs the same day
+log in silently (ADR-005).
 
 Useful switches (the full list, with defaults, is in `.env.example`):
 
@@ -43,6 +48,7 @@ Useful switches (the full list, with defaults, is in `.env.example`):
 | `KILL_SWITCH=1` | Liquidate everything and exit, ignoring the weekday guard |
 | `FORCE_RESIZE=1` | Force the position-size rebalance regardless of the fortnightly schedule |
 | `ENV_CASHFLOW=<amount>` | Record a deposit (+) or withdrawal (-) before trading |
+| `KITE_FORGET_SESSION=1` | Discard the cached Kite session and log in afresh |
 
 ## Files
 
@@ -79,6 +85,7 @@ Every change beyond a typo starts with an Architecture Decision Record in
 ```
 src/stocks_on_the_move/
   momentum.py     the strategy (formerly test_updated_v4.py)
+  kite_auth.py    Kite login: session cache, redirect listener, paste (ADR-005)
   __main__.py     python -m entry point
 tests/            pytest suite
 docs/adr/         architecture decision records
