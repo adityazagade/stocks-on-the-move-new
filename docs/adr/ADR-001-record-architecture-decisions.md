@@ -1,6 +1,6 @@
 # ADR-001: Record architecture decisions
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
