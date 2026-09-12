@@ -23,11 +23,11 @@ import pandas as pd
 import pytest
 
 from fakes import FakeBroker
-from stocks_on_the_move import momentum as m
 from stocks_on_the_move.artifacts import RunArtifacts
 from stocks_on_the_move.broker import Candle, Instrument, Quote
 from stocks_on_the_move.candles import CandleStore
 from stocks_on_the_move.context import RunContext
+from stocks_on_the_move.pipeline import run
 
 GOLDEN = Path(__file__).parent / "fixtures" / "golden"
 EXPECTED = GOLDEN / "expected"
@@ -110,7 +110,7 @@ def test_pipeline_matches_the_golden_files(config, tmp_path, make_settings, upda
         artifacts=artifacts,
     )
 
-    m.run(ctx)
+    run(ctx)
 
     actual_dir = artifacts.path
     expected_dir = EXPECTED / config

@@ -8,11 +8,11 @@ import logging
 import pytest
 
 from fakes import EVEN_WEEK_WEDNESDAY, FakeBroker, make_candles, trending_closes
-from stocks_on_the_move import momentum as m
 from stocks_on_the_move.broker import Instrument, PaperBroker, Quote
 from stocks_on_the_move.context import Fill, RunContext, build_token_cache, filled_qty
 from stocks_on_the_move.execution import safe_buy, safe_sell
 from stocks_on_the_move.ledger import init_cash_balance, read_portfolio, write_portfolio
+from stocks_on_the_move.pipeline import prune_portfolio, raise_cash_if_needed, resize_positions, run
 from stocks_on_the_move.rules import RankItem
 
 LOG = "stocks_on_the_move"  # the package logger: fills and the pipeline log from different modules
@@ -272,7 +272,7 @@ def test_prune_books_a_partial_exit_and_keeps_the_remainder(make_context):
     build_token_cache(ctx)
     ctx.portfolio.positions = {"GONE": 10, "PART": 8}
 
-    m.prune_portfolio(ctx, [rank("HELD")])  # neither holding is ranked, so both must go
+    prune_portfolio(ctx, [rank("HELD")])  # neither holding is ranked, so both must go
 
     assert ctx.portfolio.positions == {"PART": 5}
     assert ctx.portfolio.sold == {"GONE", "PART"}  # a partial exit still bars a buy-back this run
@@ -294,7 +294,7 @@ def test_prune_keeps_a_holding_whose_exit_the_broker_rejected(make_context, capl
     cash_before = ctx.portfolio.cash
 
     with caplog.at_level(logging.WARNING, logger=LOG):
-        m.prune_portfolio(ctx, [rank("HELD")])
+        prune_portfolio(ctx, [rank("HELD")])
 
     assert ctx.portfolio.positions == {"GONE": 10} and ctx.portfolio.sold == set()
     assert ctx.portfolio.cash == cash_before
@@ -317,7 +317,7 @@ def test_resize_moves_the_quantity_by_what_filled(make_context):
     broker.script_fills("FAT", ("OPEN", 7, price))  # seven of the sell-down fill, then the cancel
     broker.script_fills("THIN", ("OPEN", 2, price))  # two of the buy-up
 
-    m.resize_positions(ctx, bull=True)
+    resize_positions(ctx, bull=True)
 
     assert ctx.portfolio.positions == {"FAT": 993, "THIN": 3}
     rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "sizing.csv")}
@@ -337,7 +337,7 @@ def test_resize_leaves_the_quantity_when_nothing_fills(make_context):
     build_token_cache(ctx)
     ctx.portfolio.positions = {"FAT": 1000}
 
-    m.resize_positions(ctx, bull=False)
+    resize_positions(ctx, bull=False)
 
     assert ctx.portfolio.positions == {"FAT": 1000}
     rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "sizing.csv")}
@@ -350,7 +350,7 @@ def test_raise_cash_counts_only_what_filled_and_keeps_selling(make_context):
     funded(ctx, cash=-500.0)
     ctx.portfolio.positions = {"BEST": 10, "WORST": 10}
 
-    m.raise_cash_if_needed(ctx, [rank("BEST"), rank("WORST")])
+    raise_cash_if_needed(ctx, [rank("BEST"), rank("WORST")])
 
     # WORST: 6 asked, 2 filled; the shortfall then costs BEST 4 shares instead of none
     assert ctx.portfolio.positions == {"BEST": 6, "WORST": 8}
@@ -367,7 +367,7 @@ def test_kill_switch_keeps_the_remainder_of_a_partial_exit(make_context, caplog)
     write_portfolio(ctx.settings.portfolio_file, {"AAA": 10, "BBB": 4})
 
     with caplog.at_level(logging.WARNING, logger=LOG):
-        m.run(ctx)
+        run(ctx)
 
     assert ctx.portfolio.positions == {"BBB": 3}
     assert read_portfolio(ctx.settings.out_file) == {"BBB": 3}
@@ -385,7 +385,7 @@ def test_buys_hold_what_filled_not_what_was_asked(make_context):
     ctx = make_context(broker, cut_off_pct=0.5, artifacts=True, fill_poll_seconds=1.0, fill_timeout_seconds=1)
     ctx.universe = lambda: set(DRIFTS)
 
-    m.run(ctx)
+    run(ctx)
 
     assert ctx.portfolio.positions == {"AAA": 1}
     candidates = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "candidates.csv")}
@@ -410,7 +410,7 @@ def test_an_exit_that_does_not_fill_leaves_less_cash_for_the_buys(make_context, 
         ctx = make_context(broker, cut_off_pct=0.5, starting_cash=1_000.0, **paths)  # the exit is most of the money
         ctx.universe = lambda: set(DRIFTS)
         write_portfolio(ctx.settings.portfolio_file, {"ZZZ": 100})
-        m.run(ctx)
+        run(ctx)
         bought = sum(int(r["qty"]) for r in ledger_rows(ctx.settings.trades_ledger_file) if r["side"] == "BUY")
         return ctx, bought
 

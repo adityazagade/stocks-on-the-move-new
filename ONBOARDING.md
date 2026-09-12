@@ -20,12 +20,22 @@ A weekly momentum-rotation strategy for NSE equities, after Andreas Clenow's
    cash or slots.
 
 Orders go through Zerodha Kite Connect. State lives in four CSV files in the
-working directory. There is no database, no scheduler and no UI. The whole
-strategy is one module, `src/stocks_on_the_move/momentum.py`, run top to
-bottom by `run()` once `main()` has assembled a `RunContext`. Beside it sit
-`broker.py` and `candles.py` (the broker boundary and the candle cache,
-ADR-008), `artifacts.py` (the per-run directory, ADR-006), `settings.py`
-(every knob, ADR-007) and `kite_auth.py` (the Kite login, ADR-005).
+working directory. There is no database, no scheduler and no UI. The code is
+one module per job under `src/stocks_on_the_move/` (ADR-020):
+
+| Module | Job |
+| --- | --- |
+| `momentum.py` | the entry point: settings, weekday guard, login, `RunContext`, then `pipeline.run` |
+| `pipeline.py` | the twelve steps and `run(ctx)` |
+| `rules.py` | regime, filter chain and ranking, exit rules, ATR sizing |
+| `indicators.py` | strategy constants and the pure computations on prices |
+| `execution.py` | prices, order placement, the wait for a fill, booking |
+| `universe.py` | the symbols the strategy may hold |
+| `ledger.py` | the portfolio snapshot and the two ledgers |
+| `reporting.py` | the artifact tables' columns and row builders |
+| `context.py` | `RunContext`, `Portfolio`, `Fill`, the token cache |
+| `broker.py`, `candles.py` | the broker boundary and the candle cache (ADR-008) |
+| `artifacts.py`, `settings.py`, `kite_auth.py`, `logging_setup.py` | the run directory (ADR-006), every knob (ADR-007), the Kite login (ADR-005), logging (ADR-015) |
 
 Where this port deviates from the book, and it matters when you read the code:
 
@@ -158,7 +168,7 @@ buys as many shares as the cash covers rather than skipping the name.
 (ADR-008). `KiteBroker` spaces requests to `KITE_RPS` with jitter, retries
 `429 / too many requests` with exponential backoff and raises `BrokerError`
 when the retries run out. Never touch `KiteConnect` outside that adapter;
-`momentum.py` does not import `kiteconnect`.
+no module but `broker.py` and `kite_auth.py` imports `kiteconnect`.
 
 **Instrument tokens come from one `instruments()` download per run.**
 `token_of` is a lookup in `ctx.tokens` with a single fallback scan, and
@@ -366,7 +376,7 @@ field on `Settings` in `settings.py`, with a description and, where a wrong
 value is dangerous, a range. List it in `EXAMPLE_SECTIONS` and regenerate
 `.env.example` with the command printed at the top of that file; a test
 fails if the two drift. Fixed strategy constants (lookbacks, EMA lengths)
-stay at the top of `momentum.py`. Anything that changes the meaning of past
+live in `indicators.py`. Anything that changes the meaning of past
 ledger rows (fees, starting cash) deserves a note in the commit body.
 
 ## 7. Known rough edges

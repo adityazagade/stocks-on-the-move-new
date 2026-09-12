@@ -9,11 +9,11 @@ import logging
 import pytest
 
 from fakes import EVEN_WEEK_WEDNESDAY, ODD_WEEK_WEDNESDAY, FakeBroker, make_candles, trending_closes
-from stocks_on_the_move import momentum as m
 from stocks_on_the_move.broker import Instrument, Order, Quote
 from stocks_on_the_move.context import Fill, build_token_cache, token_of
 from stocks_on_the_move.execution import ltp_map, safe_buy, safe_sell
 from stocks_on_the_move.ledger import TRADE_COLUMNS, init_cash_balance, read_portfolio, write_portfolio
+from stocks_on_the_move.pipeline import prune_portfolio, raise_cash_if_needed, resize_positions, run
 from stocks_on_the_move.reporting import EXIT_COLUMNS, SIZING_COLUMNS
 from stocks_on_the_move.rules import (
     ExitCheck,
@@ -168,14 +168,14 @@ def test_prune_sells_unranked_holdings_and_skips_on_an_empty_ranking(make_contex
     build_token_cache(ctx)
     ctx.portfolio.positions = {"KEEP": 5, "DROP": 3}
 
-    m.prune_portfolio(ctx, [rank("KEEP")])
+    prune_portfolio(ctx, [rank("KEEP")])
 
     assert [(o.symbol, o.side, o.quantity) for o in broker.orders] == [("DROP", "SELL", 3)]
     assert ctx.portfolio.positions == {"KEEP": 5}
     assert ctx.portfolio.sold == {"DROP"}
 
     with caplog.at_level(logging.WARNING, logger=LOG):
-        m.prune_portfolio(ctx, [])
+        prune_portfolio(ctx, [])
     assert "Ranking empty" in caplog.text
     assert ctx.portfolio.positions == {"KEEP": 5}
 
@@ -191,7 +191,7 @@ def test_resize_skips_odd_iso_weeks_unless_forced(make_context):
         init_cash_balance(ctx)
         build_token_cache(ctx)
         ctx.portfolio.positions = {"AAA": 1000}
-        m.resize_positions(ctx, bull=True)
+        resize_positions(ctx, bull=True)
         touched = any(c[0] in ("ltp", "historical_data", "place_order") for c in broker.calls)
         assert touched is forced
 
@@ -206,7 +206,7 @@ def test_resize_sells_down_and_buys_up_toward_atr_targets(make_context):
     ctx.portfolio.positions = {"FAT": 1000, "THIN": 1}
     ctx.portfolio.cash = 100_000.0
 
-    m.resize_positions(ctx, bull=True)
+    resize_positions(ctx, bull=True)
 
     sides = {(o.symbol, o.side) for o in broker.orders}
     assert sides == {("FAT", "SELL"), ("THIN", "BUY")}
@@ -221,7 +221,7 @@ def test_raise_cash_sells_the_worst_ranked_holding_first(ctx):
     ctx.portfolio.positions = {"BEST": 10, "WORST": 10}
     ctx.portfolio.cash = -500.0
 
-    m.raise_cash_if_needed(ctx, [rank("BEST"), rank("WORST")])
+    raise_cash_if_needed(ctx, [rank("BEST"), rank("WORST")])
 
     per_share = 100.0 * (1 - ctx.settings.fees_pct - ctx.settings.slippage_pct)
     assert ctx.broker.orders == [Order("WORST", "SELL", 6, "MARKET")]  # ceil(500 / 99.8)
@@ -250,7 +250,7 @@ def test_run_buys_the_top_ranked_names_in_a_bull_market(make_context, caplog):
     ctx.universe = lambda: set(DRIFTS)
 
     with caplog.at_level(logging.INFO, logger=LOG):
-        m.run(ctx)
+        run(ctx)
 
     buys = [o for o in broker.orders if o.side == "BUY"]
     assert [o.symbol for o in buys] == ["AAA", "BBB"]  # best first, strongest drift ranks highest
@@ -273,7 +273,7 @@ def test_run_sits_out_a_bear_market(make_context, caplog):
     ctx.universe = lambda: set(DRIFTS)
 
     with caplog.at_level(logging.INFO, logger=LOG):
-        m.run(ctx)
+        run(ctx)
 
     assert broker.orders == []
     assert ctx.portfolio.positions == {}
@@ -285,7 +285,7 @@ def test_run_kill_switch_liquidates_everything(make_context):
     ctx = make_context(broker, kill_switch=True)
     write_portfolio(ctx.settings.portfolio_file, {"AAA": 10, "BBB": 4})
 
-    m.run(ctx)
+    run(ctx)
 
     assert broker.orders == [Order("AAA", "SELL", 10, "MARKET"), Order("BBB", "SELL", 4, "MARKET")]
     assert ctx.portfolio.positions == {}
@@ -298,7 +298,7 @@ def test_run_kill_switch_liquidates_everything(make_context):
 def test_run_aborts_on_an_empty_universe(ctx, caplog):
     ctx.universe = set
     with caplog.at_level(logging.ERROR, logger=LOG):
-        m.run(ctx)
+        run(ctx)
     assert "Empty universe" in caplog.text
     assert ctx.broker.orders == []
     assert not any(c[0] == "historical_data" for c in ctx.broker.calls)
@@ -404,7 +404,7 @@ def test_prune_writes_a_verdict_per_holding(make_context):
     build_token_cache(ctx)
     ctx.portfolio.positions = {"KEEP": 5, "DROP": 3}
 
-    m.prune_portfolio(ctx, [rank("KEEP", close=120.0, ema100=100.0)])
+    prune_portfolio(ctx, [rank("KEEP", close=120.0, ema100=100.0)])
 
     rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "exits.csv")}
     assert (rows["KEEP"]["decision"], rows["KEEP"]["reasons"], rows["KEEP"]["rank"]) == ("HOLD", "", "1")
@@ -412,14 +412,14 @@ def test_prune_writes_a_verdict_per_holding(make_context):
     assert (rows["DROP"]["decision"], rows["DROP"]["reasons"], rows["DROP"]["rank"]) == ("SELL", "unranked", "")
     assert float(rows["DROP"]["price"]) == pytest.approx(broker.ltps["NSE:DROP"])
 
-    m.prune_portfolio(ctx, [])
+    prune_portfolio(ctx, [])
     assert (ctx.artifacts.path / "exits.csv").read_text() == ",".join(EXIT_COLUMNS) + "\n"
 
 
 def test_skipped_resize_leaves_a_header_and_a_flag(make_context):
     ctx = make_context(now=lambda: ODD_WEEK_WEDNESDAY, artifacts=True)
     ctx.portfolio.positions = {"AAA": 10}
-    m.resize_positions(ctx, bull=True)
+    resize_positions(ctx, bull=True)
     assert (ctx.artifacts.path / "sizing.csv").read_text() == ",".join(SIZING_COLUMNS) + "\n"
     assert json.loads((ctx.artifacts.path / "run.json").read_text())["resize_performed"] is False
 
@@ -434,7 +434,7 @@ def test_resize_records_every_holding_with_its_action(make_context):
     ctx.portfolio.positions = {"FAT": 1000, "THIN": 1, "GHOST": 5}
     ctx.portfolio.cash = 100_000.0
 
-    m.resize_positions(ctx, bull=False)
+    resize_positions(ctx, bull=False)
 
     rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "sizing.csv")}
     assert rows["FAT"]["action"] == "SELL" and int(rows["FAT"]["delta"]) < 0
@@ -450,7 +450,7 @@ def test_run_writes_the_whole_artifact_set(make_context, caplog):
     ctx.artifacts.attach_log(logging.getLogger(LOG))
 
     with caplog.at_level(logging.INFO, logger=LOG):
-        m.run(ctx)
+        run(ctx)
 
     path = ctx.artifacts.path
     assert sorted(p.name for p in path.iterdir()) == [
@@ -509,7 +509,7 @@ def test_run_writes_the_whole_artifact_set(make_context, caplog):
 def test_run_records_an_aborted_status_on_an_empty_universe(make_context):
     ctx = make_context(artifacts=True)
     ctx.universe = set
-    m.run(ctx)
+    run(ctx)
     path = ctx.artifacts.path
     meta = json.loads((path / "run.json").read_text())
     assert meta["status"] == "aborted:empty_universe" and meta["universe_size"] == 0
@@ -521,7 +521,7 @@ def test_run_kill_switch_uses_the_kill_mode_directory(make_context):
     broker = FakeBroker(ltp={"NSE:AAA": 100.0})
     ctx = make_context(broker, kill_switch=True, artifacts=True)
     write_portfolio(ctx.settings.portfolio_file, {"AAA": 10})
-    m.run(ctx)
+    run(ctx)
     assert ctx.artifacts.path.name.endswith("-kill")
     meta = json.loads((ctx.artifacts.path / "run.json").read_text())
     assert (meta["status"], meta["positions_before"], meta["positions_after"]) == ("completed", {"AAA": 10}, {})
@@ -541,7 +541,7 @@ def test_prune_keeps_a_holding_it_cannot_price(make_context, caplog):
     cash_before = ctx.portfolio.cash
 
     with caplog.at_level(logging.WARNING, logger=LOG):
-        m.prune_portfolio(ctx, [rank("KEEP", close=120.0, ema100=100.0)])
+        prune_portfolio(ctx, [rank("KEEP", close=120.0, ema100=100.0)])
 
     assert ctx.portfolio.positions == {"KEEP": 5, "GHOST": 3}
     assert ctx.portfolio.sold == set()
@@ -565,7 +565,7 @@ def test_resize_leaves_the_quantity_when_the_sell_down_has_no_price(make_context
     build_token_cache(ctx)
     ctx.portfolio.positions = {"FAT": 1000}
 
-    m.resize_positions(ctx, bull=False)
+    resize_positions(ctx, bull=False)
 
     assert ctx.portfolio.positions == {"FAT": 1000}
     assert broker.orders == []
@@ -579,7 +579,7 @@ def test_raise_cash_skips_a_holding_it_cannot_price_and_sells_the_next(ctx):
     ctx.portfolio.positions = {"BEST": 10, "WORST": 10}
     ctx.portfolio.cash = -500.0
 
-    m.raise_cash_if_needed(ctx, [rank("BEST"), rank("WORST")])
+    raise_cash_if_needed(ctx, [rank("BEST"), rank("WORST")])
 
     assert ctx.portfolio.positions["WORST"] == 10  # untouched: nothing was sent
     assert [o.symbol for o in ctx.broker.orders] == ["BEST"]
@@ -592,7 +592,7 @@ def test_kill_switch_reports_what_it_could_not_sell(make_context, caplog):
     write_portfolio(ctx.settings.portfolio_file, {"AAA": 10, "BBB": 4})
 
     with caplog.at_level(logging.WARNING, logger=LOG):
-        m.run(ctx)
+        run(ctx)
 
     assert broker.orders == [Order("AAA", "SELL", 10, "MARKET")]
     assert ctx.portfolio.positions == {"BBB": 4}

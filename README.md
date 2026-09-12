@@ -101,7 +101,15 @@ GitHub Actions runs the same pre-commit hooks and the test suite on Python
 
 ```
 src/stocks_on_the_move/
-  momentum.py     the strategy: run(ctx) over a RunContext (formerly test_updated_v4.py)
+  momentum.py     entry point: settings, weekday guard, login, RunContext, pipeline.run
+  pipeline.py     the twelve weekly steps and run(ctx) (ADR-020)
+  rules.py        regime, filter chain and ranking, exit rules, ATR sizing
+  indicators.py   strategy constants and the pure computations on prices
+  execution.py    prices, order placement, the wait for a fill, booking (ADR-019)
+  universe.py     the symbols the strategy may hold
+  ledger.py       the portfolio snapshot and the two ledgers (ADR-004)
+  reporting.py    the artifact tables' columns and row builders
+  context.py      RunContext, Portfolio, Fill, the token cache
   broker.py       Broker protocol, KiteBroker with backoff, PaperBroker (ADR-008)
   candles.py      per-instrument candle cache with self-correcting fetches (ADR-008)
   artifacts.py    the per-run directory under runs/: tables, run.json, run.log (ADR-006)

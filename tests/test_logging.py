@@ -10,9 +10,9 @@ from pydantic import ValidationError
 
 from fakes import FakeBroker, trending_closes
 from stocks_on_the_move import logging_setup as ls
-from stocks_on_the_move import momentum as m
 from stocks_on_the_move.broker import KiteBroker, PaperBroker
 from stocks_on_the_move.ledger import init_cash_balance
+from stocks_on_the_move.pipeline import resize_positions, run
 from stocks_on_the_move.rules import rank_universe
 from stocks_on_the_move.settings import Settings
 from test_pipeline import DRIFTS, TODAY, bull_market
@@ -67,8 +67,8 @@ def test_a_size_error_in_resize_is_a_warning(make_context, caplog):
     ctx = make_context()
     init_cash_balance(ctx)
     ctx.portfolio.positions = {"GHOST": 5}  # no instrument, no candles: size_position raises
-    with caplog.at_level(logging.WARNING, logger="stocks_on_the_move.momentum"):
-        m.resize_positions(ctx, bull=True)
+    with caplog.at_level(logging.WARNING, logger="stocks_on_the_move.pipeline"):
+        resize_positions(ctx, bull=True)
     assert "size calc error GHOST – KeyError" in caplog.text
 
 
@@ -96,13 +96,13 @@ def test_console_at_warning_while_the_run_file_keeps_debug(make_context, clean_p
     ctx.universe = lambda: set(DRIFTS)
     ctx.artifacts.attach_log()
 
-    m.run(ctx)
+    run(ctx)
     ctx.artifacts.finish("completed")
 
     console = capsys.readouterr().err
     assert "INFO" not in console and "DEBUG" not in console
     log_text = (ctx.artifacts.path / "run.log").read_text()
-    assert "INFO     stocks_on_the_move.momentum momentum:" in log_text and "Done. Final" in log_text
+    assert "INFO     stocks_on_the_move.pipeline pipeline:" in log_text and "Done. Final" in log_text
     assert "DEBUG    stocks_on_the_move.broker broker:" in log_text and "not sent" in log_text
     for secret in ("test-key", "test-secret"):
         assert secret not in log_text and secret not in console
