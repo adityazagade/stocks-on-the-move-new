@@ -1,6 +1,6 @@
 # ADR-022: Trade intents, one executor, bookkeeping in one place, and a plan mode
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -176,7 +176,47 @@ a reconciliation step re-plans if fills differed.
 
 ## Implementation Status
 
-Proposed; nothing implemented.
+Implemented on 2026-09-12, one pull request, golden expected files untouched.
+
+- **`TradeIntent`** on the context: symbol, side, quantity, reason and the
+  reference price. Reasons are `exit:<rules>`, `raise_cash`, `resize`,
+  `new_position`, `kill_switch`, and `direct` for `safe_buy` and `safe_sell`,
+  which remain as one-intent conveniences for tests and tools.
+- **Executors** in `execution.py`: the `Executor` protocol, `BrokerExecutor`
+  (the price lookup, the cash check, `_place` and the wait, returning the
+  fill unbooked) and `PlanExecutor`. `executor_for(ctx)` returns the
+  context's executor or the one the settings imply. One departure from the
+  Decision: the plan executor fills at the price the order would have gone
+  out at, the live last price or the top of book, not the intent's
+  reference close, so a plan's numbers are the run's numbers; an intent
+  with no price or no cash is `None` in a plan exactly as in a run.
+- **`trade(ctx, intent, exit=)`** runs the intent through the executor,
+  records the pair on `Portfolio.intents`, and `book` writes the ledger row
+  and calls **`Portfolio.apply(fill, cash_delta, exit=)`**, the one place a
+  position changes: add or subtract what filled, drop at zero, mark sold on
+  an exit or a sale to zero. `record_trade` returns the cash delta and no
+  longer touches the portfolio. The five loops carry no position arithmetic;
+  `outcome(intent, fill)` names `SELL`, `SELL:partial`, `BUY`, `BUY:partial`,
+  `SKIP:no_fill` or the not-sent value the step chooses.
+- **Steps**: `decide_exits` is the pure decision for step 7 and returns
+  `ExitDecision`s; resize collects sell and buy intents before trading;
+  raise-cash and the buy loop decide one intent at a time because each fill
+  moves cash or equity; the kill switch reports what stayed from the
+  positions left.
+- **Plan mode**: `PLAN_ONLY`, in the safety switches; `run_mode` says
+  `plan` and the run directory ends `-plan`; `is_trading_day` lets a plan
+  and a kill switch through the weekday guard; the broker is wrapped in
+  `PaperBroker` regardless; the ledger creates no files, appends no row and
+  counts `ENV_CASHFLOW` without writing it; step 12 logs what
+  `next_portfolio.csv` would hold and a summary of the intents by reason.
+  `orders.csv` rows carry status `PLANNED`; trade lines read `PLAN  BUY`.
+- **Docs**: `CLAUDE.md` rule 5, the onboarding first hour, section 3 rows,
+  section 4 paragraph and the file lifecycle; `.env.example` regenerated.
+- **Tests** (`tests/test_plan.py`, ten): `Portfolio.apply` in every case,
+  `outcome`, a direct trade's intent, `decide_exits` pure, the summary, the
+  executor choice, a full plan run that sends nothing and writes no state
+  while deciding an exit and two buys, plan over kill switch, and the guard.
+  The existing fill and pipeline tests pass unchanged through the new path.
 
 ## Notes
 

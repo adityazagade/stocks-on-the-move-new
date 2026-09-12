@@ -26,7 +26,8 @@ it disagrees with an Accepted ADR, the ADR wins and this file is fixed.
    to the trades ledger and rewrites `next_portfolio.csv`. Point
    `PORTFOLIO_FILE`, `OUT_FILE`, `CASH_LEDGER_FILE` and `TRADES_LEDGER_FILE`
    at scratch paths before any test run; `ONBOARDING.md` section 2 has the
-   recipe.
+   recipe. `PLAN_ONLY=1` is the mode that writes nothing: it decides, sends
+   nothing, and leaves only a run directory (ADR-022).
 6. **`archive/` is frozen.** Never edit, lint, format or import it.
 7. **Never hand-edit `trades_ledger.csv`.** Cash is reconstructed from it on
    every run; edit it and every later number is wrong.

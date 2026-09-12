@@ -1,8 +1,12 @@
-"""From a decision to a booked trade (ADR-008, ADR-019, ADR-020).
+"""From a decision to a booked trade (ADR-008, ADR-019, ADR-020, ADR-022).
 
-The price an order is sent at and the order type the series implies, the
-placement, the wait for the broker's verdict, and the booking of what filled.
-``safe_buy`` and ``safe_sell`` are the only way the pipeline trades.
+A step decides a ``TradeIntent``. ``trade`` hands it to the context's executor,
+which answers with what the broker did as a ``Fill`` (or ``None`` when nothing
+was sent), and ``book`` writes the ledger row and applies the fill to the
+portfolio, the one place a position changes. ``BrokerExecutor`` sends the order
+and waits for its verdict; ``PlanExecutor`` sends nothing and reports every
+sendable intent filled in full at the price it would have gone out at, which
+is plan mode.
 """
 
 from __future__ import annotations
@@ -10,10 +14,10 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Literal, Protocol
 
 from stocks_on_the_move.broker import Broker, Order, OrderStatus, OrderType, Side
-from stocks_on_the_move.context import Fill, RunContext, strategy_params
+from stocks_on_the_move.context import Fill, RunContext, TradeIntent, strategy_params
 from stocks_on_the_move.ledger import record_trade
 from stocks_on_the_move.settings import Settings
 from stocks_on_the_move.universe import NO_MARKET_SERIES, series_of
@@ -63,13 +67,11 @@ def net_proceeds_for_sell(settings: Settings, price: float, qty: int) -> float:
     return qty * price * (1.0 - settings.fees_pct - settings.slippage_pct)
 
 
-# Trade lines keep the wording earlier runs logged, so runs can be compared line by line.
-_TRADE_LINE = {
-    (False, "BUY"): "BUY  %-10s x%4d @ %.2f   (cash → %.2f)",
-    (False, "SELL"): "SELL %-10s x%4d @ %.2f   (cash → %.2f)",
-    (True, "BUY"): "PAPER BUY %-10s x%4d @ %.2f   (cash → %.2f)",
-    (True, "SELL"): "PAPER SELL %-9s x%4d @ %.2f   (cash → %.2f)",
-}
+# ── the executor: from an intent to what the broker did ─────────────────
+class Executor(Protocol):
+    def execute(self, intent: TradeIntent) -> Fill | None:
+        """What became of the intent; ``None`` when nothing was sent. Books nothing."""
+        ...
 
 
 def _price_for(ctx: RunContext, sym: str, side: Side) -> tuple[float, OrderType]:
@@ -85,6 +87,23 @@ def _price_for(ctx: RunContext, sym: str, side: Side) -> tuple[float, OrderType]
         top = q.best_ask if side == "BUY" else q.best_bid
         return (top if top is not None else q.last_price), "LIMIT"
     return ltp_map(ctx.broker, [sym]).get(sym, 0.0), "MARKET"
+
+
+def _sendable(ctx: RunContext, intent: TradeIntent) -> tuple[float, OrderType] | None:
+    """The price and order type the intent would go out at, or ``None`` with the reason logged."""
+    sym, side, qty = intent.symbol, intent.side, intent.quantity
+    if qty < strategy_params(ctx).min_shares:
+        return None
+    price_used, order_type = _price_for(ctx, sym, side)
+    if price_used <= 0:
+        logger.warning("No price for %s; %s x%d skipped", sym, side, qty)
+        return None
+    if side == "BUY":
+        need = gross_cost_for_buy(ctx.settings, price_used, qty)
+        if need > ctx.portfolio.cash + 1e-6:
+            logger.info("Not enough cash for BUY %s x%d (need %.2f, have %.2f)", sym, qty, need, ctx.portfolio.cash)
+            return None
+    return price_used, order_type
 
 
 def await_fill(ctx: RunContext, order_id: str) -> tuple[OrderStatus, int, float]:
@@ -138,7 +157,7 @@ def await_fill(ctx: RunContext, order_id: str) -> tuple[OrderStatus, int, float]
 
 
 def _place(ctx: RunContext, sym: str, side: Side, qty: int, price: float, order_type: OrderType) -> Fill:
-    """Send the order, wait for the broker's verdict, book what filled (ADR-019)."""
+    """Send the order, wait for the broker's verdict, return what filled (ADR-019). Books nothing."""
     pf = ctx.portfolio
     limit = price if order_type == "LIMIT" else None
     order_id = ctx.broker.place_order(Order(sym, side, qty, order_type, limit_price=limit))
@@ -181,32 +200,121 @@ def _place(ctx: RunContext, sym: str, side: Side, qty: int, price: float, order_
         book_price = price
     if filled < qty:
         logger.warning("%s %s: %d of %d filled (%s); booking the part that did", side, sym, filled, qty, status.status)
-    record_trade(ctx, side, sym, filled, book_price)
-    logger.info(_TRADE_LINE[(ctx.paper, side)], sym, filled, book_price, pf.cash)
     return Fill(sym, side, order_id, status.status, qty, filled, book_price)
 
 
+class BrokerExecutor:
+    """Sends the intent through the context's broker and waits for the verdict (ADR-019).
+
+    Paper mode is this executor over ``PaperBroker``.
+    """
+
+    def __init__(self, ctx: RunContext) -> None:
+        self._ctx = ctx
+
+    def execute(self, intent: TradeIntent) -> Fill | None:
+        sendable = _sendable(self._ctx, intent)
+        if sendable is None:
+            return None
+        price, order_type = sendable
+        return _place(self._ctx, intent.symbol, intent.side, intent.quantity, price, order_type)
+
+
+class PlanExecutor:
+    """Sends nothing: every sendable intent is reported filled in full at the price it would go out at (ADR-022)."""
+
+    def __init__(self, ctx: RunContext) -> None:
+        self._ctx = ctx
+
+    def execute(self, intent: TradeIntent) -> Fill | None:
+        ctx = self._ctx
+        sendable = _sendable(ctx, intent)
+        if sendable is None:
+            return None
+        price, order_type = sendable
+        pf = ctx.portfolio
+        order_id = f"PLAN-{len(pf.orders) + 1:04d}"
+        pf.orders.append(
+            {
+                "order_id": order_id,
+                "symbol": intent.symbol,
+                "side": intent.side,
+                "order_type": order_type,
+                "limit_price": price if order_type == "LIMIT" else None,
+                "requested_qty": intent.quantity,
+                "status": "PLANNED",
+                "filled_qty": intent.quantity,
+                "average_price": price,
+                "status_message": None,
+                "polls": 0,
+                "waited_s": 0.0,
+            }
+        )
+        ctx.artifacts.write_table("orders", ORDER_COLUMNS, pf.orders)
+        return Fill(intent.symbol, intent.side, order_id, "PLANNED", intent.quantity, intent.quantity, price)
+
+
+def executor_for(ctx: RunContext) -> Executor:
+    """The context's executor, else the one its settings imply: the plan executor or the broker."""
+    if ctx.executor is not None:
+        return ctx.executor
+    return PlanExecutor(ctx) if ctx.settings.plan_only else BrokerExecutor(ctx)
+
+
+# ── booking: the one path from a fill to the ledger and the portfolio ───
+Mode = Literal["live", "paper", "plan"]
+
+# Trade lines keep the wording earlier runs logged, so runs can be compared line by line.
+_TRADE_LINE: dict[tuple[Mode, Side], str] = {
+    ("live", "BUY"): "BUY  %-10s x%4d @ %.2f   (cash → %.2f)",
+    ("live", "SELL"): "SELL %-10s x%4d @ %.2f   (cash → %.2f)",
+    ("paper", "BUY"): "PAPER BUY %-10s x%4d @ %.2f   (cash → %.2f)",
+    ("paper", "SELL"): "PAPER SELL %-9s x%4d @ %.2f   (cash → %.2f)",
+    ("plan", "BUY"): "PLAN  BUY %-10s x%4d @ %.2f   (cash → %.2f)",
+    ("plan", "SELL"): "PLAN  SELL %-9s x%4d @ %.2f   (cash → %.2f)",
+}
+
+
+def trade_mode(ctx: RunContext) -> Mode:
+    if ctx.settings.plan_only:
+        return "plan"
+    return "paper" if ctx.paper else "live"
+
+
+def book(ctx: RunContext, fill: Fill, *, exit: bool = False) -> None:
+    """Write the ledger row for a fill and apply it to the portfolio (ADR-019, ADR-022)."""
+    cash_delta = record_trade(ctx, fill.side, fill.symbol, fill.filled, fill.price)
+    ctx.portfolio.apply(fill, cash_delta, exit=exit)
+    logger.info(_TRADE_LINE[(trade_mode(ctx), fill.side)], fill.symbol, fill.filled, fill.price, ctx.portfolio.cash)
+
+
+def trade(ctx: RunContext, intent: TradeIntent, *, exit: bool = False) -> Fill | None:
+    """Run one intent through the executor and book what filled: the pipeline's only way to trade.
+
+    ``exit`` marks the symbol sold this run even on a partial fill, so the buy
+    step does not buy back into a name the strategy wanted out of.
+    """
+    fill = executor_for(ctx).execute(intent)
+    ctx.portfolio.intents.append((intent, fill))
+    if fill is not None and fill.filled > 0:
+        book(ctx, fill, exit=exit)
+    return fill
+
+
+def outcome(intent: TradeIntent, fill: Fill | None, *, not_sent: str = "SKIP:not_placed") -> str:
+    """The decision value the tables print for what became of an intent."""
+    if fill is None:
+        return not_sent
+    if fill.filled <= 0:
+        return "SKIP:no_fill"
+    return intent.side if fill.filled == intent.quantity else f"{intent.side}:partial"
+
+
 def safe_buy(ctx: RunContext, sym: str, qty: int) -> Fill | None:
-    """Place a BUY order and book what filled; ``None`` when nothing was sent (ADR-019)."""
-    if qty < strategy_params(ctx).min_shares:
-        return None
-    price_used, order_type = _price_for(ctx, sym, "BUY")
-    if price_used <= 0:
-        logger.warning("No price for %s; BUY x%d skipped", sym, qty)
-        return None
-    need = gross_cost_for_buy(ctx.settings, price_used, qty)
-    if need > ctx.portfolio.cash + 1e-6:
-        logger.info("Not enough cash for BUY %s x%d (need %.2f, have %.2f)", sym, qty, need, ctx.portfolio.cash)
-        return None
-    return _place(ctx, sym, "BUY", qty, price_used, order_type)
+    """Buy ``qty`` now, outside any step: one intent, executed and booked. ``None`` when nothing was sent."""
+    return trade(ctx, TradeIntent(sym, "BUY", qty, "direct", math.nan))
 
 
 def safe_sell(ctx: RunContext, sym: str, qty: int) -> Fill | None:
-    """Place a SELL order and book what filled; ``None`` when nothing was sent (ADR-019)."""
-    if qty < strategy_params(ctx).min_shares:
-        return None
-    price_used, order_type = _price_for(ctx, sym, "SELL")
-    if price_used <= 0:
-        logger.warning("No price for %s; SELL x%d skipped", sym, qty)
-        return None
-    return _place(ctx, sym, "SELL", qty, price_used, order_type)
+    """Sell ``qty`` now, outside any step: one intent, executed and booked. ``None`` when nothing was sent."""
+    return trade(ctx, TradeIntent(sym, "SELL", qty, "direct", math.nan))

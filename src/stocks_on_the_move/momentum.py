@@ -31,6 +31,7 @@ through the environment:
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from stocks_on_the_move import kite_auth
 from stocks_on_the_move.artifacts import Artifacts, NoArtifacts, RunArtifacts
@@ -40,6 +41,9 @@ from stocks_on_the_move.context import RunContext, ist_now
 from stocks_on_the_move.logging_setup import configure_logging
 from stocks_on_the_move.pipeline import run
 from stocks_on_the_move.settings import Settings, SettingsError
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +65,17 @@ def authenticate(settings: Settings) -> KiteBroker:
 
 
 def run_mode(settings: Settings) -> str:
-    """``kill``, ``paper`` or ``live``: the run directory's suffix."""
+    """``plan``, ``kill``, ``paper`` or ``live``: the run directory's suffix."""
+    if settings.plan_only:
+        return "plan"
     if settings.kill_switch:
         return "kill"
     return "live" if settings.allow_kite_execution else "paper"
+
+
+def is_trading_day(settings: Settings, now: datetime) -> bool:
+    """The weekday guard: the configured weekday only, unless the run is a kill switch or a plan (ADR-022)."""
+    return settings.kill_switch or settings.plan_only or now.weekday() == settings.trading_weekday
 
 
 def main() -> None:
@@ -79,7 +90,7 @@ def main() -> None:
     configure_logging(settings.log_level)
 
     # 1) Run only on the configured weekday in IST (0=Mon; default 2=Wed), before any login
-    if not settings.kill_switch and ist_now().weekday() != settings.trading_weekday:
+    if not is_trading_day(settings, ist_now()):
         logger.info("Not scheduled trading weekday (IST) – abort")
         return
 
@@ -98,7 +109,7 @@ def main() -> None:
 
     try:
         kite = authenticate(settings)
-        paper = not settings.allow_kite_execution
+        paper = not settings.allow_kite_execution or settings.plan_only  # a plan never reaches the real broker
         broker: Broker = PaperBroker(kite) if paper else kite
         ctx = RunContext(
             settings=settings,
