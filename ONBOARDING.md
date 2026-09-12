@@ -276,6 +276,16 @@ pull request (`.github/workflows/ci.yml`, ADR-011). Anything added to
 `.pre-commit-config.yaml` is in CI by construction. There is no branch
 protection: a red run on `main` is a signal to fix, not a block.
 
+**Logging.** Configured in `main()`, never at import, on the
+`stocks_on_the_move` logger only (ADR-015): the console shows `LOG_LEVEL`
+(default `INFO`) and the run's `run.log` under `runs/` gets everything at
+DEBUG with the logger name and source line. So "why did that not print" is
+usually "it is in the file". Level policy: WARNING for anything skipped or
+swallowed that a person should look at (a symbol dropped from the ranking by
+an exception, a sizing error, a rate-limit backoff); INFO for decisions and
+totals; DEBUG for per-call detail; never a token, a secret or a Kite response
+body. `LOG_LEVEL=DEBUG` gives a verbose console for a live investigation.
+
 **Tests.** `tests/test_settings.py` covers parsing, ranges and the generated
 `.env.example`. `tests/test_kite_auth.py` covers the login module against a
 fake client. `tests/test_momentum.py` covers the pure helpers: symbol parsing,
@@ -303,6 +313,12 @@ in the commit body; a silently regenerated golden is no test at all. The
 fixtures are seeded random walks, not market data, because the repository is
 public; `make_fixtures.py` documents the role each instrument plays and is
 re-run only deliberately, followed by `--update-golden`.
+
+**The assistant contract.** `CLAUDE.md` at the repository root is the
+eighty-line summary of the rules a coding assistant must follow here
+(ADR-014); Claude Code reads it at the start of every session. It is a
+summary, not the source: any ADR that changes a listed rule updates it in
+the same commit.
 
 **Decisions.** Every change beyond a typo starts with an Architecture
 Decision Record in `docs/adr/`. Draft it as Proposed, commit it on its own,
@@ -351,10 +367,10 @@ value. Each one needs an ADR before the fix; see `docs/adr/`.
    list until the validation runs in ADR-005's plan are done. Unattended
    scheduling itself is a separate, future ADR.
 6. **Broad `except Exception` in `rank_universe`** used to hide data problems
-   at DEBUG. Addressed by ADR-006: every swallowed error is now an
-   `error:<type>` row in `universe.csv`. The DEBUG log line itself stays
-   until ADR-015. Stays on this list until ADR-006's paper-run comparison is
-   done.
+   at DEBUG. Addressed by ADR-006 (every swallowed error is an `error:<type>`
+   row in `universe.csv`) and ADR-015 (the log line is a WARNING naming the
+   symbol and the exception type). Stays on this list until ADR-006's
+   paper-run comparison is done.
 
 ## 8. Glossary
 

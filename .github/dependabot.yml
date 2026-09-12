@@ -1,12 +1,15 @@
 # Automated dependency refresh (ADR-013). One grouped pull request per ecosystem per
 # week, on Monday, so it is reviewed before Wednesday's run. Merging is always by hand,
 # with CI (ADR-011) green and the changelogs of pandas and kiteconnect read. The version
-# bounds in pyproject.toml are the policy: a major bump is never proposed here (ADR-003).
+# bounds in pyproject.toml are the policy (ADR-003): `lockfile-only` below means Dependabot
+# updates uv.lock within them and never edits the bounds themselves. Its first run, without
+# that line, rewrote `pandas<3` to `<4` and proposed pandas 3 (#13); a bound moves by ADR.
 # Commits carry the ADR number like every other implementation commit (ADR-001).
 version: 2
 updates:
   - package-ecosystem: "uv"
     directory: "/"
+    versioning-strategy: lockfile-only
     schedule:
       interval: "weekly"
       day: "monday"

@@ -42,6 +42,7 @@ from stocks_on_the_move import kite_auth
 from stocks_on_the_move.artifacts import Artifacts, NoArtifacts, RunArtifacts
 from stocks_on_the_move.broker import Broker, Instrument, KiteBroker, Order, OrderType, PaperBroker, Side
 from stocks_on_the_move.candles import CandleStore
+from stocks_on_the_move.logging_setup import configure_logging
 from stocks_on_the_move.settings import Settings, SettingsError
 
 # ── strategy constants ───────────────────────────────────────────────────
@@ -501,7 +502,7 @@ def evaluate_instrument(ctx: RunContext, inst: Instrument) -> Evaluation:
             return verdict(reason="insufficient_data")
         return verdict(rank=RankItem(sym, float(score), float(ann_slope), float(r2), last, ema100))
     except Exception as exc:
-        logger.debug("%s skipped – %s", sym, exc)
+        logger.warning("%s skipped – %s: %s", sym, type(exc).__name__, exc)
         return verdict(reason=f"error:{type(exc).__name__}")
 
 
@@ -735,7 +736,7 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
     """Every even ISO week (IST), rebalance sizes toward ATR targets (cash-aware); verdicts go to sizing.csv."""
     pf = ctx.portfolio
     if (ctx.now().isocalendar().week % 2) and not ctx.settings.force_resize:  # odd ISO week → skip
-        logger.debug("Size rebalance skipped (odd week, IST)")
+        logger.info("Size rebalance skipped (odd week, IST)")
         ctx.artifacts.write_table("sizing", SIZING_COLUMNS, [])
         ctx.artifacts.record(resize_performed=False)
         return
@@ -749,7 +750,7 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
         try:
             size = size_position(ctx, sym, account_equity)
         except Exception as exc:
-            logger.debug("size calc error %s – %s", sym, exc)
+            logger.warning("size calc error %s – %s: %s", sym, type(exc).__name__, exc)
             rows[sym] = {"symbol": sym, "qty": qty, "action": "SKIP:size_error"}
             continue
         diff = size.target_qty - qty
@@ -999,7 +1000,7 @@ def run(ctx: RunContext) -> None:
             try:
                 qty = target_shares(ctx, r.symbol, account_equity)
             except Exception as exc:
-                logger.debug("size calc error %s – %s", r.symbol, exc)
+                logger.warning("size calc error %s – %s: %s", r.symbol, type(exc).__name__, exc)
                 row["decision"] = "SKIP:size_error"
                 continue
             if qty < MIN_SHARES:
@@ -1047,11 +1048,7 @@ def run_mode(settings: Settings) -> str:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    configure_logging("INFO")  # the package logger, at entry, never at import (ADR-015)
 
     # 0) Load and validate configuration; a bad value names itself and stops the run
     try:
@@ -1059,6 +1056,7 @@ def main() -> None:
     except SettingsError as exc:
         logger.error("%s", exc)
         raise SystemExit(2) from None
+    configure_logging(settings.log_level)
 
     # 1) Run only on the configured weekday in IST (0=Mon; default 2=Wed), before any login
     if not settings.kill_switch and ist_now().weekday() != settings.trading_weekday:

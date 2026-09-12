@@ -159,10 +159,22 @@ Dependabot's first Monday run and the first merged pull request.
   (ADR-001). README and the onboarding guide state the review rule: merge
   by hand, CI green, changelogs of pandas and kiteconnect read, never
   auto-merge.
-- **Step 3** is outstanding: the first run either opens pull requests or
-  logs an error on the repository's Insights page; record the outcome here.
-- **Step 4** is outstanding: the first grouped Python pull request merged by
-  hand after CI. Status moves to Implemented after that.
+- **Step 3, the first run**, happened within minutes of the merge, not on
+  Monday: Dependabot runs once when its configuration lands. It accepted the
+  `uv` ecosystem, so the Renovate fallback is closed. It opened #13,
+  `ADR-013: Bump pandas from 2.3.3 to 3.0.5 in the python group`, and to do
+  so rewrote `pandas>=2.2,<3` to `<4` in `pyproject.toml`: Dependabot's
+  default versioning strategy widens a requirement to admit a new major,
+  which contradicts "bounds are the policy". The fix is one line,
+  `versioning-strategy: lockfile-only` on the `uv` ecosystem, which the
+  options reference supports for `uv`: only `uv.lock` is updated, and a
+  release that would need a manifest change is ignored. #13 is not to be
+  merged; the bound is ADR-003's to move. Its CI run is worth keeping: all
+  three jobs, the golden test (ADR-009) included, passed on pandas 3.0.5,
+  which is exactly the evidence ADR-003 asks for before the bound moves.
+- **Step 4** is outstanding: the first grouped Python pull request that
+  stays inside the bounds, merged by hand after CI. #13 does not count.
+  Status moves to Implemented after that.
 
 ## Notes
 
@@ -178,6 +190,6 @@ Dependabot's first Monday run and the first merged pull request.
   together when both touch those, or edits one to match. Written into the
   configuration file's comments and the onboarding guide.
 - The dev-group `uv` pin (ADR-010) is bounded at the next minor
-  (`<0.13`); Dependabot will propose the bump when uv 0.13 appears and the
-  bound must be raised by hand in the same pull request. That is ADR-003's
-  rule working as intended, at minor granularity for a pre-1.0 tool.
+  (`<0.13`). With `lockfile-only`, Dependabot will not propose uv 0.13 at
+  all; raising that bound is a hand edit when wanted. That is ADR-003's rule
+  working as intended, at minor granularity for a pre-1.0 tool.

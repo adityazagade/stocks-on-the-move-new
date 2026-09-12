@@ -53,6 +53,7 @@ Useful switches (the full list, with defaults, is in `.env.example`):
 | `FORCE_RESIZE=1` | Force the position-size rebalance regardless of the fortnightly schedule |
 | `ENV_CASHFLOW=<amount>` | Record a deposit (+) or withdrawal (-) before trading |
 | `KITE_FORGET_SESSION=1` | Discard the cached Kite session and log in afresh |
+| `LOG_LEVEL=DEBUG` | Verbose console; the run's `run.log` under `runs/` is always at DEBUG |
 
 ## Files
 

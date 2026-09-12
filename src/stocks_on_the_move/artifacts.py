@@ -26,12 +26,11 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Protocol
 
+from stocks_on_the_move.logging_setup import PACKAGE_LOGGER, file_handler
 from stocks_on_the_move.settings import Settings
 
 logger = logging.getLogger(__name__)
 
-LOG_FORMAT = "%(asctime)s %(levelname)-8s %(message)s"
-LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 _REDACTED_KEY_PARTS = ("KEY", "SECRET", "TOKEN")
 
 
@@ -192,14 +191,17 @@ class RunArtifacts:
 
     # -- log ----------------------------------------------------------------
     def attach_log(self, target: logging.Logger | None = None) -> None:
-        """Copy every line the run logs into run.log, at the existing level and format."""
-        target = target or logging.getLogger()
+        """Copy everything the package logs, at DEBUG, into run.log (ADR-015).
+
+        The console shows what LOG_LEVEL asks for; this file gets every record, in a
+        format that adds the logger name and the source line.
+        """
+        target = target or logging.getLogger(PACKAGE_LOGGER)
         try:
-            handler = logging.FileHandler(self._path / "run.log", encoding="utf-8")
+            handler = file_handler(str(self._path / "run.log"))
         except OSError as exc:
             logger.warning("Could not open %s for the run log: %s", self._path / "run.log", exc)
             return
-        handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATEFMT))
         target.addHandler(handler)
         self._handler = handler
         self._target = target
