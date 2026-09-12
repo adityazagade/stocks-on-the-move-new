@@ -49,11 +49,11 @@ def test_read_portfolio_missing_file_and_bad_rows(tmp_path):
 # ── costs ────────────────────────────────────────────────────────────────
 
 
-def test_buy_cost_and_sell_proceeds_bracket_the_notional():
+def test_buy_cost_and_sell_proceeds_bracket_the_notional(settings):
     price, qty = 100.0, 10
-    friction = m.SETTINGS.fees_pct + m.SETTINGS.slippage_pct
-    assert m.gross_cost_for_buy(price, qty) == pytest.approx(1000 * (1 + friction))
-    assert m.net_proceeds_for_sell(price, qty) == pytest.approx(1000 * (1 - friction))
+    friction = settings.fees_pct + settings.slippage_pct
+    assert m.gross_cost_for_buy(settings, price, qty) == pytest.approx(1000 * (1 + friction))
+    assert m.net_proceeds_for_sell(settings, price, qty) == pytest.approx(1000 * (1 - friction))
 
 
 # ── indicators ───────────────────────────────────────────────────────────
@@ -69,8 +69,8 @@ def test_atr_constant_range():
     n = 30
     df = pd.DataFrame({"high": [102.0] * n, "low": [98.0] * n, "close": [100.0] * n})
     assert m.atr(df, period=20) == pytest.approx(4.0)
-    assert math.isnan(m.atr(pd.DataFrame()))
-    assert math.isnan(m.atr(df.head(1)))  # one bar -> no true range after the shift
+    assert math.isnan(m.atr(pd.DataFrame(), 20))
+    assert math.isnan(m.atr(df.head(1), 20))  # one bar -> no true range after the shift
 
 
 def test_composite_momentum_perfect_log_linear_uptrend():

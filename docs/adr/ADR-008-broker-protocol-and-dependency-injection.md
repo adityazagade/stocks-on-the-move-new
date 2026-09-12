@@ -171,4 +171,57 @@ Introduce a `broker.py` module and route every external call through it.
 
 ## Implementation Status
 
-Not started.
+Code complete on 2026-09-12; awaiting plan step 3 by the owner.
+
+- Step 1 landed as `src/stocks_on_the_move/broker.py` (`Broker`, `Order`,
+  `Instrument`, `Quote`, `Candle`, `KiteBroker`, `PaperBroker`, `BrokerError`),
+  `tests/fakes.py` (`FakeBroker`, synthetic candles, a frozen clock) and
+  `tests/test_broker.py` (spacing, backoff, the raise after retries, the Kite
+  vocabulary mapping, the paper wrapper).
+- Step 2 landed as `src/stocks_on_the_move/candles.py` (`CandleStore`) and
+  the rewrite of `momentum.py` around `Portfolio` and `RunContext`: every
+  pipeline function takes the context, `main()` assembles it and `run(ctx)`
+  is the routine from step 2 onward. `momentum.py` no longer imports
+  `kiteconnect`, holds no mutable module state and has no `SETTINGS` handle
+  (the interim from ADR-007). `tests/test_candles.py` covers the cache paths;
+  `tests/test_pipeline.py` covers orders, exits, resize, cash raising and
+  whole `run(ctx)` calls in bull, bear and kill-switch markets. 150 tests.
+- Step 3 is outstanding: a same-day paper run on the ADR-007 build
+  (`d80533f`) and on this one, same cache and settings, comparing the `Top`,
+  `SELL`, `BUY` and `PAPER` lines and the scratch trades ledger. The trade
+  lines keep their old wording for exactly this diff. Status moves to
+  Implemented after that.
+
+## Notes
+
+Refinements made while implementing, all inside the decision above:
+
+- **The paper label.** Paper mode is the choice of `PaperBroker` in `main()`,
+  as decided. The trade log lines still read `PAPER BUY` / `PAPER SELL` in
+  paper mode, driven by a `paper` flag on the context that `main()` sets from
+  the same setting, so the validation diff and the operator's eye see what
+  they saw before. `PaperBroker` logs each unsent order at DEBUG.
+- **Paper sells of no-market series price at the best bid.** The old paper
+  branch booked every sell at the last traded price; the live branch used the
+  top of the book for `BE`/`BZ`-type names. One path now, the live one. Paper
+  ledgers for such names will differ from the old build by the bid-ask gap.
+- **A trade without a price is skipped.** When neither a quote nor an LTP
+  comes back, `safe_buy` and `safe_sell` log a WARNING and return `None`
+  instead of sending a MARKET order at an unknown price while the ledger
+  recorded nothing (the old behaviour in that failure path).
+- **The universe fetch is injectable and lazy.** `RunContext.universe`
+  supplies the base symbols; `None` means the NSE archives, and only the list
+  actually used is downloaded (the old code fetched both lists every run).
+- **Ledgers load after the login.** `run(ctx)` needs the broker, so
+  `read_portfolio` and `init_cash_balance` now run after `authenticate()`.
+  A failed login therefore no longer appends the `ENV_CASHFLOW` row.
+- **The login's liveness check is unthrottled.** `kite_auth.authenticate`
+  builds the `KiteConnect` itself, so the one `profile()` call runs before a
+  `KiteBroker` exists. It is the first request of the run and the throttle
+  never delays a first request anyway; only the 429 retry is lost for it.
+- **Rough edge 4 stays as decided.** `CandleStore` still ends its window at
+  the machine's local date, but that date is an injected callable
+  (`today=`), so the follow-up ADR is one default change, and tests freeze it.
+- `KiteBroker` memoises `instruments()` per exchange; the old code downloaded
+  the NSE list twice per run (`build_token_cache` and `get_universe`).
+- The stray `print()` of the opening portfolio value is a log line now.

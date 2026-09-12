@@ -22,8 +22,10 @@ A weekly momentum-rotation strategy for NSE equities, after Andreas Clenow's
 Orders go through Zerodha Kite Connect. State lives in four CSV files in the
 working directory. There is no database, no scheduler and no UI. The whole
 strategy is one module, `src/stocks_on_the_move/momentum.py`, run top to
-bottom by `main()`. Beside it sit `settings.py` (every knob, ADR-007) and
-`kite_auth.py` (the Kite login, ADR-005).
+bottom by `run()` once `main()` has assembled a `RunContext`. Beside it sit
+`broker.py` and `candles.py` (the broker boundary and the candle cache,
+ADR-008), `settings.py` (every knob, ADR-007) and `kite_auth.py` (the Kite
+login, ADR-005).
 
 Where this port deviates from the book, and it matters when you read the code:
 
@@ -95,11 +97,11 @@ behind each step.
 
 | # | Step | Functions | Notes |
 | --- | --- | --- | --- |
-| 1 | Weekday guard | `ist_now` | Skipped when `KILL_SWITCH=1` |
-| 2 | Load state, log in | `read_portfolio`, `init_cash_balance`, `authenticate` (delegates to `kite_auth`) | Cash is reconstructed from ledgers, never stored |
-| 3 | Token cache | `build_token_cache` | One `instruments("NSE")` call, then everything is a dict lookup |
+| 1 | Weekday guard, log in | `main`, `authenticate` | In `main()`, before the login, so a non-trading day costs nothing. `authenticate` returns a `KiteBroker`; paper mode wraps it in `PaperBroker` |
+| 2 | Load state | `read_portfolio`, `init_cash_balance` | First step of `run(ctx)`. Cash is reconstructed from ledgers, never stored |
+| 3 | Token cache | `build_token_cache` | One `instruments("NSE")` call into `ctx.tokens`, then everything is a dict lookup |
 | 3.5 | Kill switch | `liquidate_all` | Sells everything, writes `OUT_FILE`, returns |
-| 4 | Universe | `fetch_index_constituents`, `fetch_nifty_constituents` | Public CSVs from NSE archives, no auth. Empty universe aborts the run |
+| 4 | Universe | `nse_universe_symbols`, or `ctx.universe` | Public CSVs from NSE archives, no auth; tests inject a set. Empty universe aborts the run |
 | 5 | Regime | `index_trend` | Index close vs 200-day EMA. Only gates buys, never sells |
 | 6 | Rank | `get_universe`, `rank_universe`, `_composite_momentum` | Filters then scores; see section 4 |
 | 7 | Exits | `prune_portfolio`, `should_exit`, `_trailing_stop_hit` | Runs every week, bull or bear |
@@ -134,8 +136,8 @@ A holding is sold when any of these hold:
 - trailing stop: close is more than `EXIT_MULTIPLE` ATRs below the 40-day
   rolling maximum close.
 
-Sold symbols go into the module-level `sold_symbols` set and are not bought
-back in the same run. If the ranking is empty the prune step is skipped
+Sold symbols go into `ctx.portfolio.sold` and are not bought back in the
+same run. If the ranking is empty the prune step is skipped
 entirely, as a guard against liquidating everything on a bad data day.
 
 ### Sizing (steps 9 and 11)
@@ -147,23 +149,26 @@ buys as many shares as the cash covers rather than skipping the name.
 
 ## 4. Design decisions you should not undo
 
-**Every Kite call goes through `kite_call`.** It spaces calls to `KITE_RPS`
-with jitter and retries `429 / too many requests` with exponential backoff.
-Never call a `KiteConnect` method directly.
+**Every broker call goes through the `Broker` protocol** in `broker.py`
+(ADR-008). `KiteBroker` spaces requests to `KITE_RPS` with jitter, retries
+`429 / too many requests` with exponential backoff and raises `BrokerError`
+when the retries run out. Never touch `KiteConnect` outside that adapter;
+`momentum.py` does not import `kiteconnect`.
 
 **Instrument tokens come from one `instruments()` download per run.**
-`token_of` is a dict lookup with a single fallback scan. Do not reintroduce
+`token_of` is a lookup in `ctx.tokens` with a single fallback scan, and
+`KiteBroker` memoises `instruments()` per exchange. Do not reintroduce
 `quote()` for token resolution; it was the main source of rate-limit errors.
 
 **Candles are cached per instrument token in `CACHE_DIR/<token>.csv`.**
-`candles_df` fetches incrementally and, on every update, re-downloads a
+`CandleStore.get` (`candles.py`) fetches incrementally and, on every update, re-downloads a
 30-day overlap and compares the first overlapping close with the cache. A
 mismatch means a split or bonus rewrote history, so the cache file is
 deleted and the full history re-fetched. If you change the CSV schema, delete
 the cache directory.
 
 **Cash is reconstructed, not stored.** On every run,
-`CASH_BAL = STARTING_CASH + sum(cash_ledger.amount) + sum(trades_ledger.cash_delta)`.
+`ctx.portfolio.cash = STARTING_CASH + sum(cash_ledger.amount) + sum(trades_ledger.cash_delta)`.
 The two ledgers are the source of truth for cash, which means:
 
 - never hand-edit `trades_ledger.csv`,
@@ -189,16 +194,17 @@ the best bid or ask from a `quote()` depth call. `series_of` and
 **Configuration is one validated object.** `settings.Settings` (ADR-007) holds
 every environment knob with its type, default and, where a wrong value is
 dangerous, its range. `main()` loads it once with `Settings.from_env()` and
-installs it as `momentum.SETTINGS`; importing the module reads nothing and
+puts it on the `RunContext`; importing the module reads nothing and
 creates nothing. A bad value refuses to start with the variable named;
 `uv run --env-file .env python -m stocks_on_the_move.settings --check` shows
 what a run would see. Tests build one with `Settings.from_values(...)`; see
 `tests/conftest.py`.
 
-**Module-level mutable state.** `CASH_BAL`, `sold_symbols`, `TOKEN_CACHE`,
-`NIFTY500_SET` and `NIFTY_FULL_SET` are globals mutated during a run. They
-are reset only by starting a new process. Do not call `main()` twice in one
-interpreter.
+**No module-level mutable state.** Everything a run mutates lives on the
+`RunContext` (ADR-008): `ctx.portfolio` holds positions, cash and the names
+sold this run; `ctx.tokens` the instrument tokens. `run(ctx)` can be called
+as often as you like with fresh contexts, which is how the pipeline tests
+work.
 
 ## 5. Files and their lifecycle
 
@@ -208,7 +214,7 @@ interpreter.
 | `next_portfolio.csv` | step 12 | you | Copy over `current_portfolio.csv` once fills are confirmed |
 | `cash_ledger.csv` | you, or `ENV_CASHFLOW` | step 2 | `date,amount,note` |
 | `trades_ledger.csv` | every `safe_buy` / `safe_sell` | step 2 | Append-only |
-| `.cache_candles/<token>.csv` | `candles_df` | `candles_df` | `date,open,high,low,close,volume`; git-ignored, safe to delete |
+| `.cache_candles/<token>.csv` | `CandleStore` | `CandleStore` | `date,open,high,low,close,volume`; git-ignored, safe to delete |
 
 The gap between step 12 and the next run's step 2 is deliberate: the script
 assumes every order filled at the price it used. Confirming fills against the
@@ -233,10 +239,14 @@ The pre-commit hooks run ruff on every commit; `uv run pre-commit run
 `.env.example`. `tests/test_kite_auth.py` covers the login module against a
 fake client. `tests/test_momentum.py` covers the pure helpers: symbol parsing,
 portfolio CSV round-trips, fee arithmetic, ATR and the momentum score.
-Nothing that takes a `KiteConnect` is tested. If you add such a test, pass a
-small fake object exposing the methods you need, for example an `ltp`
-method returning `{"NSE:TCS": {"last_price": 100.0}}`, and monkeypatch
-`kite_call` or `candles_df` where the function goes to the network.
+`tests/test_broker.py` covers the Kite adapter's mapping and backoff and the
+paper wrapper; `tests/test_candles.py` the cache paths; `tests/test_pipeline.py`
+everything above the helpers, including whole `run(ctx)` calls in bull, bear
+and kill-switch markets. To test a strategy function, take the `ctx` fixture
+(a `RunContext` over `fakes.FakeBroker` with the clock frozen on a Wednesday
+in an even ISO week), add instruments with `broker.add_equity(...)` and
+prices with `broker.ltps[...]`, then assert on `broker.orders` and
+`ctx.portfolio`.
 
 **Decisions.** Every change beyond a typo starts with an Architecture
 Decision Record in `docs/adr/`. Draft it as Proposed, commit it on its own,
@@ -265,15 +275,16 @@ value. Each one needs an ADR before the fix; see `docs/adr/`.
 1. **Stale names and docstring for the lookbacks.** See section 1. Renaming
    the constants to `LOOKBACK_SHORT/MID/LONG` and fixing the
    `_composite_momentum` docstring is a safe first commit.
-2. **`kite_call` returns `None` after exhausting retries.** The loop falls
-   through instead of raising, so sustained rate limiting surfaces as an
-   `AttributeError` on `.items()` somewhere downstream rather than a clear
-   error at the call site.
+2. **`kite_call` returned `None` after exhausting retries.** Fixed by
+   ADR-008: `KiteBroker.call` raises `BrokerError` carrying the last message.
+   Stays on this list until ADR-008's paper-run comparison is done.
 3. **Fills are assumed.** Limit orders on `BE`/`BZ` names may not fill, but
    the ledger and the portfolio snapshot are updated as if they did.
-4. **`candles_df` uses the machine's local date** (`datetime.now().date()`)
+4. **`CandleStore` uses the machine's local date** (`datetime.now().date()`)
    for the end of the window while everything else uses IST. Identical on a
-   machine set to IST, off by one day otherwise.
+   machine set to IST, off by one day otherwise. ADR-008 made the date
+   injectable (`today=` on `CandleStore`); the fix is a one-line follow-up
+   ADR.
 5. **`authenticate` needed a TTY.** Addressed by ADR-005: the session is
    cached until 06:00 IST and the login redirect is captured on a local
    listener, so only the first run of the day needs a person. Stays on this

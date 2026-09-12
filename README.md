@@ -65,7 +65,7 @@ Useful switches (the full list, with defaults, is in `.env.example`):
 ## Development
 
 ```sh
-uv run pytest                 # unit tests for the pure strategy helpers
+uv run pytest                 # unit tests, including whole runs against a fake broker
 uv run ruff check --fix .     # lint: pyflakes, isort, pyupgrade, bugbear, ...
 uv run ruff format .          # format
 uv run pre-commit install     # run the above automatically on every commit
@@ -88,7 +88,9 @@ Every change beyond a typo starts with an Architecture Decision Record in
 
 ```
 src/stocks_on_the_move/
-  momentum.py     the strategy (formerly test_updated_v4.py)
+  momentum.py     the strategy: run(ctx) over a RunContext (formerly test_updated_v4.py)
+  broker.py       Broker protocol, KiteBroker with backoff, PaperBroker (ADR-008)
+  candles.py      per-instrument candle cache with self-correcting fetches (ADR-008)
   settings.py     every environment knob, validated once at startup (ADR-007)
   kite_auth.py    Kite login: session cache, redirect listener, paste (ADR-005)
   __main__.py     python -m entry point
