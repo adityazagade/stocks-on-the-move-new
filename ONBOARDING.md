@@ -180,8 +180,11 @@ entirely, as a guard against liquidating everything on a bad data day.
 
 `target_shares` = `account_equity * RISK_FACTOR / ATR`, capped so no
 position exceeds `MAX_WEIGHT` of equity. Equity is cash plus mark-to-market
-value and is recomputed after every buy. When a buy is unaffordable the code
-buys as many shares as the cash covers rather than skipping the name.
+value and is recomputed after every buy. When the cash covers less than
+`MIN_POSITION_FRACTION` (default one half) of a candidate's target, the name
+is passed over with `SKIP:below_min_fraction` and the next candidate is tried;
+above it, the code buys as many shares as the cash covers (ADR-026). `1` is
+the book's rule, full positions only; `0` buys any fragment.
 
 ## 4. Design decisions you should not undo
 

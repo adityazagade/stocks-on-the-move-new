@@ -1,8 +1,8 @@
 # ADR-026: A minimum size for a new position
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
-- **Last Updated**: 2026-09-12
+- **Last Updated**: 2026-09-13
 - **Author**: Aditya Zagade
 
 ## Context
@@ -113,4 +113,19 @@ resize week
 
 ## Implementation Status
 
-Proposed; nothing implemented.
+Implemented on 2026-09-13, one pull request.
+
+- `MIN_POSITION_FRACTION` (default 0.5, 0 to 1) beside `MAX_POSITIONS` in
+  the sizing and risk settings, on `StrategyParams` as
+  `min_position_fraction`; `.env.example` regenerated.
+- The buy step compares the affordable quantity with the fraction of the
+  target after the share floor and before the intent; below it the row
+  reads `SKIP:below_min_fraction` and the loop moves on. `candidates.csv`
+  gains `target_qty` next to `qty`, so the fraction is readable per row.
+- Tests: with most of the equity held and little cash, the calm candidate
+  the cash covers under half of is passed over and the volatile one, whose
+  ATR target is a quarter of the cost, is bought in full; at `0` the
+  fragment is bought; at `1` only the full position is.
+- The golden diff is described in the commit body.
+- **Plan step 3**, the fraction at 0, 0.5 and 1 over the cached history,
+  waits for the owner's warm cache (ADR-023 step 6).

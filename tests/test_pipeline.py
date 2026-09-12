@@ -9,6 +9,7 @@ import logging
 import pytest
 
 from fakes import EVEN_WEEK_WEDNESDAY, ODD_WEEK_WEDNESDAY, FakeBroker, make_candles, trending_closes
+from stocks_on_the_move import pipeline as m
 from stocks_on_the_move.broker import Instrument, Order, Quote
 from stocks_on_the_move.context import Fill, build_token_cache, token_of
 from stocks_on_the_move.execution import ltp_map, safe_buy, safe_sell
@@ -563,3 +564,48 @@ def test_kill_switch_reports_what_it_could_not_sell(make_context, caplog):
     assert read_portfolio(ctx.settings.out_file) == {"BBB": 4}
     assert "could not sell 1 position(s), still held: BBB" in caplog.text
     assert "1 position(s) remain" in caplog.text
+
+
+# ── ADR-026: a minimum size for a new position ───────────────────────────
+
+
+def _two_candidates(make_context, **overrides):
+    """AAA is calm and expensive to size in full; BBB is volatile, so its ATR target is a quarter of AAA's cost."""
+    broker = FakeBroker()
+    broker.add_equity("AAA", 1, trending_closes(120, start=100.0), end=TODAY)
+    broker._instruments.append(Instrument(2, "BBB", "NSE", "NSE", "EQ"))
+    broker.candles[2] = make_candles(trending_closes(120, start=100.0), end=TODAY, spread=0.05)
+    broker.ltps.update({"NSE:BBB": broker.ltps["NSE:AAA"], "NSE:ZZZ": 1000.0})
+    ctx = make_context(broker, cut_off_pct=1.0, artifacts=True, **overrides)
+    init_cash_balance(ctx)
+    build_token_cache(ctx)
+    ctx.portfolio.positions = {"ZZZ": 100}  # most of the equity is held, so cash is the binding constraint
+    ctx.portfolio.cash = 2_000.0
+    gather_snapshots(ctx, broker.instruments("NSE"))
+    close = broker.ltps["NSE:AAA"]
+    ranks = [rank("AAA", close=close, ma100=close * 0.9), rank("BBB", close=close, ma100=close * 0.9)]
+    return ctx, ranks
+
+
+def test_a_candidate_the_cash_covers_only_in_part_is_passed_over_for_the_next(make_context):
+    ctx, ranks = _two_candidates(make_context)
+    m.buy_candidates(ctx, ranks, bull=True, account_equity=ctx.portfolio.cash + 100_000.0)
+
+    rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "candidates.csv")}
+    aaa, bbb = rows["AAA"], rows["BBB"]
+    assert aaa["decision"] == "SKIP:below_min_fraction"
+    assert 0 < int(aaa["qty"]) < 0.5 * int(aaa["target_qty"])  # the cash covered under half of AAA's size
+    assert bbb["decision"] == "BUY" and bbb["qty"] == bbb["target_qty"]
+    assert set(ctx.portfolio.positions) == {"ZZZ", "BBB"}
+
+
+def test_the_fraction_at_zero_buys_the_fragment_and_at_one_only_full_positions(make_context):
+    ctx, ranks = _two_candidates(make_context, min_position_fraction=0.0)
+    m.buy_candidates(ctx, ranks, bull=True, account_equity=ctx.portfolio.cash + 100_000.0)
+    rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "candidates.csv")}
+    assert rows["AAA"]["decision"] == "BUY" and int(rows["AAA"]["qty"]) < int(rows["AAA"]["target_qty"])
+
+    ctx, ranks = _two_candidates(make_context, min_position_fraction=1.0)
+    m.buy_candidates(ctx, ranks, bull=True, account_equity=ctx.portfolio.cash + 100_000.0)
+    rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "candidates.csv")}
+    assert (rows["AAA"]["decision"], rows["BBB"]["decision"]) == ("SKIP:below_min_fraction", "BUY")

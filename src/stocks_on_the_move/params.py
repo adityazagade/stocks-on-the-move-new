@@ -50,6 +50,7 @@ class StrategyParams:
     min_volume: int = _setting_default("min_volume")
     max_atr_pct: float = _setting_default("max_atr_pct")
     max_gap_pct: float = _setting_default("max_gap_pct")
+    min_position_fraction: float = _setting_default("min_position_fraction")
 
     @classmethod
     def from_settings(cls, settings: Settings) -> StrategyParams:
@@ -63,6 +64,7 @@ class StrategyParams:
             min_volume=settings.min_volume,
             max_atr_pct=settings.max_atr_pct,
             max_gap_pct=settings.max_gap_pct,
+            min_position_fraction=settings.min_position_fraction,
         )
 
     @property
