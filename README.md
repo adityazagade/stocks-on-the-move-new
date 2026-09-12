@@ -61,6 +61,7 @@ Useful switches (the full list, with defaults, is in `.env.example`):
 | `cash_ledger.csv` | Deposits and withdrawals |
 | `trades_ledger.csv` | Every placed or paper trade with fees and slippage |
 | `.cache_candles/` | Incremental daily-candle cache per instrument token (git-ignored) |
+| `runs/<date>/<time>-<mode>/` | What each run decided: ranking, exits, sizes, candidates, trades, log, `run.json` (git-ignored; `runs/latest` is the newest) |
 
 ## Development
 
@@ -91,6 +92,7 @@ src/stocks_on_the_move/
   momentum.py     the strategy: run(ctx) over a RunContext (formerly test_updated_v4.py)
   broker.py       Broker protocol, KiteBroker with backoff, PaperBroker (ADR-008)
   candles.py      per-instrument candle cache with self-correcting fetches (ADR-008)
+  artifacts.py    the per-run directory under runs/: tables, run.json, run.log (ADR-006)
   settings.py     every environment knob, validated once at startup (ADR-007)
   kite_auth.py    Kite login: session cache, redirect listener, paste (ADR-005)
   __main__.py     python -m entry point

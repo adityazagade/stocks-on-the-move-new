@@ -24,6 +24,10 @@ kite_session.json
 # Candle cache written by the strategy (thousands of CSVs, fully regenerable)
 .cache_candles/
 
+# Per-run artifacts (ADR-006). The rule: state the code reads in order to run is
+# versioned (the ledgers below); diagnostics the code produces are not.
+runs/
+
 # The ledgers below hold live portfolio and trade history. They are tracked on
 # purpose so the repo doubles as a record of the account. Uncomment to exclude.
 # current_portfolio.csv

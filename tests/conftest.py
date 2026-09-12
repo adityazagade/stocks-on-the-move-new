@@ -16,6 +16,7 @@ import pytest
 
 from fakes import EVEN_WEEK_WEDNESDAY, FakeBroker
 from stocks_on_the_move import momentum as m
+from stocks_on_the_move.artifacts import RunArtifacts
 from stocks_on_the_move.candles import CandleStore
 from stocks_on_the_move.settings import Settings
 
@@ -37,6 +38,7 @@ def make_settings(tmp_path) -> Callable[..., Settings]:
             "out_file": str(tmp_path / "next_portfolio.csv"),
             "cash_ledger_file": str(tmp_path / "cash_ledger.csv"),
             "trades_ledger_file": str(tmp_path / "trades_ledger.csv"),
+            "runs_dir": tmp_path / "runs",
         }
         values.update(overrides)
         return Settings.from_values(**values)
@@ -55,16 +57,26 @@ def make_context(make_settings) -> Callable[..., m.RunContext]:
 
     The clock is frozen at a Wednesday in an even ISO week unless ``now`` says
     otherwise; the candle store's "today" follows that clock, and it never sleeps.
+    ``artifacts=True`` gives the context a real run directory under the tmp path.
     """
 
-    def make(broker: FakeBroker | None = None, *, now: Callable[[], datetime] | None = None, **overrides):
+    def make(
+        broker: FakeBroker | None = None,
+        *,
+        now: Callable[[], datetime] | None = None,
+        artifacts: bool = False,
+        **overrides,
+    ):
         s = make_settings(**overrides)
         broker = FakeBroker() if broker is None else broker
         clock = now or (lambda: EVEN_WEEK_WEDNESDAY)
         candles = CandleStore(
             broker, s.cache_dir, sleep_sec=s.candle_sleep_sec, sleep=lambda _: None, today=lambda: clock().date()
         )
-        return m.RunContext(settings=s, broker=broker, candles=candles, now=clock, paper=True)
+        ctx = m.RunContext(settings=s, broker=broker, candles=candles, now=clock, paper=True)
+        if artifacts:  # a real run directory under the test's runs_dir (ADR-006)
+            ctx.artifacts = RunArtifacts.create(s.runs_dir, started=clock(), mode=m.run_mode(s), settings=s)
+        return ctx
 
     return make
 
