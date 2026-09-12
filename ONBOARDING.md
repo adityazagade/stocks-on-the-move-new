@@ -241,7 +241,13 @@ disagree. Use `uv add` / `uv add --dev` / `uv remove`, never `pip`.
 `uv lock --upgrade && uv sync` refreshes within the bounds in
 `pyproject.toml`. pandas is held below 3.0 on purpose: 3.x changes
 copy-on-write and string-dtype defaults and the strategy math has not been
-re-validated against it.
+re-validated against it. Dependabot (ADR-013) proposes the refresh for you:
+every Monday one grouped pull request per ecosystem (`uv`, `github-actions`,
+`pre-commit`), commit subjects prefixed `ADR-013:`. Merge by hand, only with
+CI green and the pandas and kiteconnect changelogs read; never auto-merge. The
+ty hook `rev` must equal the `ty` pin in the dev group and the ruff `rev`
+should track the ruff dev dependency, so merge the `uv` and `pre-commit` pull
+requests together when both touch those.
 
 **Lint and format.** ruff, configured in `pyproject.toml`, 120-column lines,
 rule sets E/W/F/I/UP/B/C4/SIM. `archive/` is excluded and must stay that way.
