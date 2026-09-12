@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Tool caches
+.ruff_cache/
+.pytest_cache/
+
+# Secrets (copy .env.example -> .env)
+.env
+
+# Candle cache written by the strategy (thousands of CSVs, fully regenerable)
+.cache_candles/
+
+# The ledgers below hold live portfolio and trade history. They are tracked on
+# purpose so the repo doubles as a record of the account. Uncomment to exclude.
+# current_portfolio.csv
+# next_portfolio.csv
+# cash_ledger.csv
+# trades_ledger.csv
+
+# Editors / OS
+.idea/
+.DS_Store
+
+# Personal Claude Code permissions
+.claude/settings.local.json
