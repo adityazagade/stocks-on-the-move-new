@@ -24,6 +24,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-017](ADR-017-adjust-positions-only-after-a-placed-trade.md) | Adjust positions only after a trade was placed | Implemented | 2026-09-12 |
 | [ADR-018](ADR-018-end-the-candle-window-on-the-ist-date.md) | End the candle window on the IST date | Implemented | 2026-09-12 |
 | [ADR-019](ADR-019-confirm-fills-before-booking-a-trade.md) | Confirm fills against the broker before booking a trade | Implemented | 2026-09-12 |
+| [ADR-020](ADR-020-split-the-strategy-module-along-its-seams.md) | Split the strategy module along its seams | Proposed | 2026-09-12 |
 
 ## Writing a new ADR
 
