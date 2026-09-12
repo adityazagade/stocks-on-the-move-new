@@ -136,4 +136,42 @@ workflow needs no secrets.
 
 ## Implementation Status
 
-Not started.
+Code complete on 2026-09-12; awaiting plan step 2, which needs the workflow
+on GitHub.
+
+- Step 1 landed as `.github/workflows/ci.yml` with the two jobs as decided:
+  `checks` (Python 3.13, `uv sync --locked --all-groups`,
+  `uv run pre-commit run --all-files --show-diff-on-failure`) and `tests`
+  (matrix 3.12 and 3.13, `uv run pytest -q`), `permissions: contents: read`,
+  a concurrency group per ref that cancels superseded runs, uv's cache on the
+  action's default. `actions/checkout` is pinned to its moving major tag
+  `v7`; `astral-sh/setup-uv` publishes no moving major tag, so it is pinned
+  by commit SHA with the version in a trailing comment (`# v10.1.0`), the
+  form its own README uses. The badge is in `README.md`; the onboarding
+  guide's tooling paragraph mentions CI.
+- The 3.12 promise was exercised locally before the first push: the full
+  suite (178 tests) passes on CPython 3.12.14 from a `--locked` sync.
+- Step 2 is outstanding and happens with the pull request that carries this
+  ADR: both jobs must go green there and on `main` after the merge. Then, on
+  a scratch branch with a draft pull request, a deliberate ruff violation
+  must fail `checks` and a deliberate `uv.lock` drift must fail `tests`;
+  the branch is deleted afterwards. Status moves to Implemented after that.
+
+## Notes
+
+- The Context above calls the repository private. It is public
+  (`gh repo view --json visibility` says `PUBLIC` on 2026-09-12). Runner
+  minutes are therefore free and unlimited, and the README badge renders for
+  everyone, which is better than the ADR assumed. It also means the ledgers
+  ADR-004 versions are public data; that is a matter for the owner and, if
+  it changes anything, for an ADR superseding ADR-004, not for this one.
+- `setup-uv`'s `python-version` input sets `UV_PYTHON`, which takes
+  precedence over `.python-version`, so the matrix job really runs on the
+  matrix interpreter rather than on the pinned 3.13.
+- `check-yaml` in the existing hooks validates the workflow file itself.
+- The first run of the pull request failed in three seconds on every job:
+  `Unable to resolve action astral-sh/setup-uv@v10`. The Decision assumed a
+  moving major tag that the action does not have (only `v10.0.0`, `v10.0.1`,
+  `v10.1.0` exist). Pinning by SHA, which the Decision already allowed, was
+  the fix. ADR-013's `github-actions` ecosystem updates SHA pins with a
+  version comment, so the pin stays maintainable.

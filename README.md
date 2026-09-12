@@ -1,5 +1,7 @@
 # Stocks on the Move (NSE)
 
+[![CI](https://github.com/adityazagade/stocks-on-the-move-new/actions/workflows/ci.yml/badge.svg)](https://github.com/adityazagade/stocks-on-the-move-new/actions/workflows/ci.yml)
+
 Weekly momentum-rotation portfolio for NSE equities, adapted from Andreas
 Clenow's *Stocks on the Move*. The strategy ranks the NIFTY 500 by
 risk-adjusted momentum, gates new entries on the index trend, sizes positions
@@ -84,6 +86,10 @@ uv lock --upgrade && uv sync  # refresh everything within the pyproject bounds
 
 Every change beyond a typo starts with an Architecture Decision Record in
 `docs/adr/`. ADR-001 describes the process.
+
+GitHub Actions runs the same pre-commit hooks and the test suite on Python
+3.12 and 3.13 for every push to `main` and every pull request
+(`.github/workflows/ci.yml`, ADR-011).
 
 ## Layout
 

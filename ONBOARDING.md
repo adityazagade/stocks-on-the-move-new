@@ -246,7 +246,11 @@ re-validated against it.
 **Lint and format.** ruff, configured in `pyproject.toml`, 120-column lines,
 rule sets E/W/F/I/UP/B/C4/SIM. `archive/` is excluded and must stay that way.
 The pre-commit hooks run ruff on every commit; `uv run pre-commit run
---all-files` runs them by hand.
+--all-files` runs them by hand. GitHub Actions runs those same hooks, plus
+the test suite on Python 3.12 and 3.13, on every push to `main` and every
+pull request (`.github/workflows/ci.yml`, ADR-011). Anything added to
+`.pre-commit-config.yaml` is in CI by construction. There is no branch
+protection: a red run on `main` is a signal to fix, not a block.
 
 **Tests.** `tests/test_settings.py` covers parsing, ranges and the generated
 `.env.example`. `tests/test_kite_auth.py` covers the login module against a
