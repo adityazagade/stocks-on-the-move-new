@@ -13,17 +13,16 @@ from stocks_on_the_move.broker import Instrument, Order, Quote
 from stocks_on_the_move.context import Fill, build_token_cache, token_of
 from stocks_on_the_move.execution import ltp_map, safe_buy, safe_sell
 from stocks_on_the_move.ledger import TRADE_COLUMNS, init_cash_balance, read_portfolio, write_portfolio
-from stocks_on_the_move.pipeline import prune_portfolio, raise_cash_if_needed, resize_positions, run
-from stocks_on_the_move.reporting import EXIT_COLUMNS, SIZING_COLUMNS
-from stocks_on_the_move.rules import (
-    ExitCheck,
-    RankItem,
-    _trailing_stop,
-    evaluate_instrument,
-    exit_reasons,
-    rank_universe,
-    size_position,
+from stocks_on_the_move.pipeline import (
+    gather_snapshots,
+    prune_portfolio,
+    raise_cash_if_needed,
+    rank_step,
+    resize_positions,
+    run,
 )
+from stocks_on_the_move.reporting import EXIT_COLUMNS, SIZING_COLUMNS
+from stocks_on_the_move.rules import RankItem
 from stocks_on_the_move.universe import StaticUniverse
 
 TODAY = EVEN_WEEK_WEDNESDAY.date()
@@ -149,15 +148,6 @@ def test_trade_lines_keep_the_paper_label(ctx, caplog):
 
 
 # ── exits ────────────────────────────────────────────────────────────────
-
-
-def test_trailing_stop_fires_after_a_collapse_and_not_in_an_uptrend(ctx):
-    steady = trending_closes(120, daily=0.001)
-    ctx.broker.add_equity("UP", 1, steady, end=TODAY)
-    ctx.broker.add_equity("DOWN", 2, steady[:-10] + [c * 0.5 for c in steady[-10:]], end=TODAY)
-    build_token_cache(ctx)
-    assert _trailing_stop(ctx, "UP")[0] is False
-    assert _trailing_stop(ctx, "DOWN")[0] is True
 
 
 def test_prune_sells_unranked_holdings_and_skips_on_an_empty_ranking(make_context, caplog):
@@ -321,68 +311,37 @@ def read_table(path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def test_evaluate_instrument_names_the_rule_that_excluded(ctx):
-    broker = ctx.broker
-    broker.add_equity("SHORT", 1, trending_closes(10), end=TODAY)
-    broker.add_equity("FALLING", 2, trending_closes(150, daily=-0.003), end=TODAY)
-    broker._instruments.append(Instrument(3, "THIN", "NSE", "NSE", "EQ"))
-    broker.candles[3] = make_candles(trending_closes(150), end=TODAY, volume=100)
-    broker._instruments.append(Instrument(4, "WILD", "NSE", "NSE", "EQ"))
-    broker.candles[4] = make_candles(trending_closes(150), end=TODAY, spread=0.25)
-    broker.add_equity("GOOD", 5, trending_closes(150, daily=0.002), end=TODAY)
-    by_symbol = {i.tradingsymbol: i for i in broker.instruments("NSE")}
-
-    def verdict(sym):
-        return evaluate_instrument(ctx, by_symbol[sym])
-
-    assert (verdict("SHORT").reason, verdict("SHORT").last) == ("history", None)
-    falling = verdict("FALLING")
-    assert falling.reason == "below_ema100" and falling.last < falling.ema100 and falling.avg_vol_20 is None
-    thin = verdict("THIN")
-    assert thin.reason == "volume" and thin.avg_vol_20 == 100 and thin.atr is None
-    wild = verdict("WILD")
-    assert wild.reason == "atr_pct" and wild.atr_pct > ctx.settings.max_atr_pct
-    good = verdict("GOOD")
-    assert good.reason is None and good.rank is not None and good.rank.symbol == "GOOD"
-    assert good.row()["status"] == "ranked" and good.atr_pct < ctx.settings.max_atr_pct
-
-
-def test_evaluate_instrument_turns_a_thrown_error_into_a_reason(make_context):
+def test_a_candle_fetch_that_throws_is_an_error_row_not_a_crash(make_context):
     class BrokenBroker(FakeBroker):
         def historical_data(self, *args, **kwargs):
             raise RuntimeError("boom")
 
     broker = BrokenBroker()
     broker.add_equity("X", 1, [1.0], end=TODAY)
+    ctx = make_context(broker, artifacts=True)
+    assert rank_step(ctx, broker.instruments("NSE")) == []
+    (row,) = read_table(ctx.artifacts.path / "universe.csv")
+    assert (row["symbol"], row["status"], row["reason"]) == ("X", "excluded", "error:RuntimeError")
+    assert ctx.snapshots["X"].error == "RuntimeError: boom"
+
+
+def test_gather_covers_the_universe_and_the_holdings_once(make_context):
+    broker = FakeBroker()
+    broker.add_equity("AAA", 1, trending_closes(120), end=TODAY)
+    broker.add_equity("HELD", 2, trending_closes(120), end=TODAY)
     ctx = make_context(broker)
-    verdict = evaluate_instrument(ctx, broker.instruments("NSE")[0])
-    assert verdict.reason == "error:RuntimeError"
-    assert rank_universe(ctx, broker.instruments("NSE")) == []
-
-
-def test_exit_reasons_list_every_rule_that_fired(ctx):
-    steady = trending_closes(120, daily=0.001)
-    ctx.broker.add_equity("UP", 1, steady, end=TODAY)
-    ctx.broker.add_equity("DOWN", 2, steady[:-10] + [c * 0.5 for c in steady[-10:]], end=TODAY)
     build_token_cache(ctx)
+    ctx.portfolio.positions = {"HELD": 5, "GHOST": 1}  # GHOST has no instrument
 
-    assert exit_reasons(ctx, None, 0.1) == ExitCheck(("unranked",))
-    hold = exit_reasons(ctx, rank("UP", close=200.0, ema100=150.0), 0.1)
-    assert hold.reasons == () and hold.sell is False and hold.stop_level is not None
-    both = exit_reasons(ctx, rank("UP", close=90.0, ema100=90.0), 0.9)
-    assert both.reasons == ("rank_cutoff", "below_ema100")
-    stopped = exit_reasons(ctx, rank("DOWN", close=200.0, ema100=150.0), 0.1)
-    assert stopped.reasons == ("trailing_stop",) and stopped.sell is True
-    assert stopped.stop_level > steady[-1] * 0.5  # the last close sits under the stop
+    gather_snapshots(ctx, [i for i in broker.instruments("NSE") if i.tradingsymbol == "AAA"])
+    fetches = [c for c in broker.calls if c[0] == "historical_data"]
 
-
-def test_size_position_is_the_floor_of_the_smaller_quantity(ctx):
-    ctx.broker.add_equity("AAA", 1, trending_closes(60, start=100.0), end=TODAY)
-    build_token_cache(ctx)
-    size = size_position(ctx, "AAA", 100_000.0)
-    assert size.risk_qty == pytest.approx(100_000 * ctx.settings.risk_factor / size.atr)
-    assert size.cap_qty == pytest.approx(100_000 * ctx.settings.max_weight / size.price)
-    assert size.target_qty == int(min(size.risk_qty, size.cap_qty))
+    assert set(ctx.snapshots) == {"AAA", "HELD", "GHOST"}
+    assert ctx.snapshots["AAA"].enough_history and ctx.snapshots["HELD"].enough_history
+    assert ctx.snapshots["GHOST"].error.startswith("KeyError")
+    assert len(fetches) == 2
+    gather_snapshots(ctx, broker.instruments("NSE"))  # a second call fetches nothing new
+    assert len([c for c in broker.calls if c[0] == "historical_data"]) == 2
 
 
 def test_record_trade_mirrors_the_ledger_into_trades_csv(make_context):

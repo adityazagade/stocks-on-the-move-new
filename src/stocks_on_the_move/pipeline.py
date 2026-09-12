@@ -1,18 +1,21 @@
-"""The weekly routine, step by step (ADR-020).
+"""The weekly routine, step by step (ADR-020, ADR-021).
 
 ``run(ctx)`` is steps 2 to 12 over an assembled ``RunContext``; each step is a
-function here that decides, trades through ``execution`` and writes its table
-through the context's artifacts. ``main()`` in ``momentum.py`` builds the
-context and calls ``run``.
+function here that decides through the pure rules, trades through
+``execution`` and writes its table through the context's artifacts.
+``gather_snapshots`` is the one place the candle store is read. ``main()`` in
+``momentum.py`` builds the context and calls ``run``.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Iterable
 from typing import Any
 
-from stocks_on_the_move.context import RunContext, build_token_cache, filled_qty
+from stocks_on_the_move.broker import Instrument
+from stocks_on_the_move.context import RunContext, build_token_cache, filled_qty, strategy_params, token_of
 from stocks_on_the_move.execution import (
     ORDER_COLUMNS,
     gross_cost_for_buy,
@@ -22,19 +25,75 @@ from stocks_on_the_move.execution import (
     safe_buy,
     safe_sell,
 )
-from stocks_on_the_move.indicators import MIN_SHARES
+from stocks_on_the_move.indicators import Snapshot, SnapshotError
 from stocks_on_the_move.ledger import TRADE_COLUMNS, init_cash_balance, read_portfolio, write_portfolio
 from stocks_on_the_move.reporting import (
     CANDIDATE_COLUMNS,
     EXIT_COLUMNS,
     RANKING_COLUMNS,
     SIZING_COLUMNS,
+    UNIVERSE_COLUMNS,
     ranking_rows,
 )
-from stocks_on_the_move.rules import RankItem, exit_reasons, index_trend, rank_universe, size_position
+from stocks_on_the_move.rules import RankItem, Sizing, evaluate, exit_check, rank, regime, size
 from stocks_on_the_move.universe import NseArchives, get_universe
 
 logger = logging.getLogger(__name__)
+
+
+# ── gathering: the one place the candle store is read (ADR-021) ──────────
+def gather_snapshots(ctx: RunContext, instruments: Iterable[Instrument]) -> None:
+    """One candle read and one ``Snapshot`` per instrument and per holding, into ``ctx.snapshots``.
+
+    Symbols already gathered are left alone, so a step may call this with no
+    instruments to be sure its holdings are covered. A fetch or a build that
+    throws becomes a failed snapshot with the error on it, and a WARNING.
+    """
+    params = strategy_params(ctx)
+    wanted: dict[str, int | None] = {i.tradingsymbol: i.token for i in instruments}
+    for sym in ctx.portfolio.positions:
+        wanted.setdefault(sym, None)
+    for sym, tok in wanted.items():
+        if sym in ctx.snapshots:
+            continue
+        try:
+            token = token_of(ctx, sym, "NSE") if tok is None else tok
+            frame = ctx.candles.get(token, params.history_days)
+            ctx.snapshots[sym] = Snapshot.from_candles(sym, token, frame, params)
+        except Exception as exc:
+            logger.warning("%s skipped – %s: %s", sym, type(exc).__name__, exc)
+            ctx.snapshots[sym] = Snapshot.failed(sym, tok or 0, exc)
+
+
+def index_snapshot(ctx: RunContext) -> Snapshot:
+    """The regime index's snapshot, over its own, longer window."""
+    params = strategy_params(ctx)
+    tok = token_of(ctx)
+    frame = ctx.candles.get(tok, params.regime_ma_period)
+    return Snapshot.from_candles(ctx.settings.index_symbol, tok, frame, params)
+
+
+def rank_step(ctx: RunContext, universe: list[Instrument]) -> list[RankItem]:
+    """Step 6: gather, evaluate every instrument into universe.csv, rank what passed."""
+    params = strategy_params(ctx)
+    gather_snapshots(ctx, universe)
+    evaluations = [evaluate(ctx.snapshots[i.tradingsymbol], params) for i in universe]
+    ctx.artifacts.write_table("universe", UNIVERSE_COLUMNS, [e.row() for e in evaluations])
+    ranks = rank(evaluations)
+    logger.info("Ranked universe: %d symbols", len(ranks))
+    return ranks
+
+
+def size_for(ctx: RunContext, sym: str, account_equity: float) -> Sizing:
+    """The ATR size for a gathered symbol; raises like ``size`` does, or when nothing was gathered."""
+    snap = ctx.snapshots.get(sym)
+    if snap is None:
+        raise LookupError(f"no snapshot for {sym}")
+    return size(snap, account_equity, strategy_params(ctx))
+
+
+def _describe(exc: BaseException) -> str:
+    return str(exc) if isinstance(exc, SnapshotError) else f"{type(exc).__name__}: {exc}"
 
 
 def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
@@ -45,14 +104,16 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
         return
 
     pf = ctx.portfolio
+    params = strategy_params(ctx)
+    gather_snapshots(ctx, ())  # the run's rank step covered these; a direct call gets them here
     idx = {r.symbol: i for i, r in enumerate(ranks)}
     rmap = {r.symbol: r for r in ranks}
     total = len(ranks)
     rows: list[dict[str, Any]] = []
     for sym, qty in list(pf.positions.items()):
-        rank = rmap.get(sym)
+        ranked = rmap.get(sym)
         pct = (idx[sym] + 1) / total if sym in idx else 1.0
-        check = exit_reasons(ctx, rank, pct)
+        check = exit_check(ctx.snapshots.get(sym), ranked, pct, params)
         fill = None
         decision = "HOLD"
         if check.sell:
@@ -79,8 +140,8 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
                 "qty": qty,
                 "rank": idx[sym] + 1 if sym in idx else None,
                 "pct_rank": pct,
-                "close": rank.close if rank else None,
-                "ema100": rank.ema100 if rank else None,
+                "close": ranked.close if ranked else None,
+                "ema100": ranked.ema100 if ranked else None,
                 "stop_level": check.stop_level,
                 "reasons": ";".join(check.reasons),
                 "decision": decision,
@@ -99,6 +160,7 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
         ctx.artifacts.record(resize_performed=False)
         return
     ctx.artifacts.record(resize_performed=True)
+    gather_snapshots(ctx, ())
 
     account_equity = pf.cash + live_value(ctx)
 
@@ -106,20 +168,20 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
     to_up, to_down = {}, {}
     for sym, qty in pf.positions.items():
         try:
-            size = size_position(ctx, sym, account_equity)
+            sizing = size_for(ctx, sym, account_equity)
         except Exception as exc:
-            logger.warning("size calc error %s – %s: %s", sym, type(exc).__name__, exc)
+            logger.warning("size calc error %s – %s", sym, _describe(exc))
             rows[sym] = {"symbol": sym, "qty": qty, "action": "SKIP:size_error"}
             continue
-        diff = size.target_qty - qty
+        diff = sizing.target_qty - qty
         rows[sym] = {
             "symbol": sym,
             "qty": qty,
-            "price": size.price,
-            "atr": size.atr,
-            "risk_qty": size.risk_qty,
-            "cap_qty": size.cap_qty,
-            "target_qty": size.target_qty,
+            "price": sizing.price,
+            "atr": sizing.atr,
+            "risk_qty": sizing.risk_qty,
+            "cap_qty": sizing.cap_qty,
+            "target_qty": sizing.target_qty,
             "delta": diff,
             "action": "BUY" if diff > 0 else "SELL" if diff < 0 else "HOLD",
         }
@@ -233,6 +295,7 @@ def buy_candidates(ctx: RunContext, ranks: list[RankItem], bull: bool, account_e
     """
     s = ctx.settings
     pf = ctx.portfolio
+    params = strategy_params(ctx)
     total = len(ranks)
     candidates: list[dict[str, Any]] = []
     if bull and pf.cash > 0:
@@ -254,12 +317,12 @@ def buy_candidates(ctx: RunContext, ranks: list[RankItem], bull: bool, account_e
                 row["decision"] = "SKIP:sold_this_run"
                 continue
             try:
-                qty = size_position(ctx, r.symbol, account_equity).target_qty
+                qty = size_for(ctx, r.symbol, account_equity).target_qty
             except Exception as exc:
-                logger.warning("size calc error %s – %s: %s", r.symbol, type(exc).__name__, exc)
+                logger.warning("size calc error %s – %s", r.symbol, _describe(exc))
                 row["decision"] = "SKIP:size_error"
                 continue
-            if qty < MIN_SHARES:
+            if qty < params.min_shares:
                 row["decision"] = "SKIP:below_min_shares"
                 continue
             cost_needed = gross_cost_for_buy(s, r.close, qty)
@@ -269,7 +332,7 @@ def buy_candidates(ctx: RunContext, ranks: list[RankItem], bull: bool, account_e
             else:
                 affordable_qty = qty
             row.update(qty=affordable_qty, est_cost=gross_cost_for_buy(s, r.close, affordable_qty))
-            if affordable_qty < MIN_SHARES:
+            if affordable_qty < params.min_shares:
                 row["decision"] = "SKIP:no_cash"
                 continue
 
@@ -339,13 +402,14 @@ def run(ctx: RunContext) -> None:
         return
 
     # 5) Determine index regime (bull/bear)
-    bull, idx_last, idx_ema = index_trend(ctx)
-    logger.info("Index %.2f vs 200-EMA %.2f → %s", idx_last, idx_ema, "BULL" if bull else "BEAR")
-    art.record(regime={"index_close": idx_last, "ema200": idx_ema, "bull": bull})
+    trend = regime(index_snapshot(ctx), strategy_params(ctx))
+    bull = trend.bull
+    logger.info("Index %.2f vs 200-EMA %.2f → %s", trend.last, trend.ema200, "BULL" if bull else "BEAR")
+    art.record(regime={"index_close": trend.last, "ema200": trend.ema200, "bull": bull})
 
-    # 6) Build & rank universe
+    # 6) Gather one snapshot per instrument and holding, evaluate, rank
     universe = get_universe(ctx, symbols)
-    ranks = rank_universe(ctx, universe)
+    ranks = rank_step(ctx, universe)
     total = len(ranks)  # maps best=0.0, worst=1.0
     art.record(ranked_count=total)
     art.write_table("ranking", RANKING_COLUMNS, ranking_rows(ranks, pf.positions))

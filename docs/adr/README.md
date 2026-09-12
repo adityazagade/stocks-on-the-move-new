@@ -25,7 +25,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-018](ADR-018-end-the-candle-window-on-the-ist-date.md) | End the candle window on the IST date | Implemented | 2026-09-12 |
 | [ADR-019](ADR-019-confirm-fills-before-booking-a-trade.md) | Confirm fills against the broker before booking a trade | Implemented | 2026-09-12 |
 | [ADR-020](ADR-020-split-the-strategy-module-along-its-seams.md) | Split the strategy module along its seams | Implemented | 2026-09-12 |
-| [ADR-021](ADR-021-snapshots-and-pure-rules.md) | One snapshot per symbol, and rules that are pure functions of it | Proposed | 2026-09-12 |
+| [ADR-021](ADR-021-snapshots-and-pure-rules.md) | One snapshot per symbol, and rules that are pure functions of it | Implemented | 2026-09-12 |
 | [ADR-022](ADR-022-trade-intents-one-executor-and-plan-mode.md) | Trade intents, one executor, bookkeeping in one place, and a plan mode | Proposed | 2026-09-12 |
 | [ADR-023](ADR-023-a-backtest-harness-over-the-candle-cache.md) | A backtest harness over the candle cache | Proposed | 2026-09-12 |
 | [ADR-024](ADR-024-simple-moving-averages-for-regime-and-trend.md) | Simple moving averages for the regime and trend filters | Proposed | 2026-09-12 |

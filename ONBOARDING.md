@@ -27,8 +27,9 @@ one module per job under `src/stocks_on_the_move/` (ADR-020):
 | --- | --- |
 | `momentum.py` | the entry point: settings, weekday guard, login, `RunContext`, then `pipeline.run` |
 | `pipeline.py` | the twelve steps and `run(ctx)` |
-| `rules.py` | regime, filter chain and ranking, exit rules, ATR sizing |
-| `indicators.py` | strategy constants and the pure computations on prices |
+| `rules.py` | regime, filter chain and ranking, exit rules, ATR sizing: pure functions of a snapshot and the parameters (ADR-021) |
+| `indicators.py` | the pure computations on prices and the `Snapshot` built once per instrument |
+| `params.py` | `StrategyParams`: the code's constants and the operator's knobs in one frozen value |
 | `execution.py` | prices, order placement, the wait for a fill, booking |
 | `universe.py` | the symbols the strategy may hold |
 | `ledger.py` | the portfolio snapshot and the two ledgers |
@@ -112,13 +113,13 @@ behind each step.
 | 3 | Token cache | `build_token_cache` | One `instruments("NSE")` call into `ctx.tokens`, then everything is a dict lookup |
 | 3.5 | Kill switch | `liquidate_all` | Sells everything, writes `OUT_FILE`, returns |
 | 4 | Universe | `NseArchives.symbols`, or the `UniverseSource` on the context | Public CSVs from NSE archives, no auth, with a last-good copy under `CACHE_DIR` for the day NSE is down (ADR-020); tests inject a `StaticUniverse`. Empty universe aborts the run |
-| 5 | Regime | `index_trend` | Index close vs 200-day EMA. Only gates buys, never sells |
-| 6 | Rank | `get_universe`, `rank_universe`, `_composite_momentum` | Filters then scores; see section 4 |
-| 7 | Exits | `prune_portfolio`, `should_exit`, `_trailing_stop_hit` | Runs every week, bull or bear |
+| 5 | Regime | `index_snapshot`, `regime` | Index close vs 200-day EMA. Only gates buys, never sells |
+| 6 | Rank | `get_universe`, `rank_step` (`gather_snapshots`, `evaluate`, `rank`) | One candle read per instrument and holding into `ctx.snapshots`; filters then scores; see section 4 |
+| 7 | Exits | `prune_portfolio`, `exit_check`, `trailing_stop` | Runs every week, bull or bear |
 | 8 | Raise cash | `raise_cash_if_needed` | Only when a withdrawal drove cash negative |
-| 9 | Resize | `resize_positions`, `target_shares` | Even ISO weeks only, or `FORCE_RESIZE=1` |
+| 9 | Resize | `resize_positions`, `size` | Even ISO weeks only, or `FORCE_RESIZE=1` |
 | 10 | Mark to market | `live_value` | Batched `ltp()` |
-| 11 | Buys | `target_shares`, `safe_buy` | Bull regime and cash > 0 only. Every order waits for the broker's verdict (`await_fill`, ADR-019) and books what filled |
+| 11 | Buys | `buy_candidates`, `size`, `safe_buy` | Bull regime and cash > 0 only. Every order waits for the broker's verdict (`await_fill`, ADR-019) and books what filled |
 | 12 | Snapshot | `write_portfolio` | Writes `OUT_FILE`; the human promotes it to `PORTFOLIO_FILE` |
 
 ### Filters and scoring (step 6)
@@ -175,6 +176,14 @@ successful fetch to `CACHE_DIR/universe-<name>.txt` and reads it back, with a
 WARNING naming its age, on the day NSE archives are unreachable (ADR-020). An
 empty universe still aborts the run; the copy only stands in for an outage,
 never for a missing list.
+
+**Rules are pure functions of a snapshot and the parameters** (ADR-021).
+`gather_snapshots` in `pipeline.py` is the one place the candle store is read:
+one frame per instrument and per holding, turned into a `Snapshot` with every
+derived value a rule needs. `evaluate`, `rank`, `exit_check`, `trailing_stop`,
+`size` and `regime` in `rules.py` take a snapshot and a `StrategyParams` and
+nothing else, which is what lets a backtest call them. Do not give a rule the
+context, the broker or the settings back.
 
 **Instrument tokens come from one `instruments()` download per run.**
 `token_of` is a lookup in `ctx.tokens` with a single fallback scan, and
@@ -335,7 +344,10 @@ take minutes longer than a paper run, which waits for nothing.
 **Tests.** `tests/test_settings.py` covers parsing, ranges and the generated
 `.env.example`. `tests/test_kite_auth.py` covers the login module against a
 fake client. `tests/test_momentum.py` covers the pure helpers: symbol parsing,
-portfolio CSV round-trips, fee arithmetic, ATR and the momentum score.
+portfolio CSV round-trips, fee arithmetic and the ATR. `tests/test_rules.py`
+covers the rules over snapshots built from synthetic candles: the
+parameters, the snapshot's fields, the score, the regime, every exclusion and
+exit reason, and sizing (ADR-021).
 `tests/test_broker.py` covers the Kite adapter's mapping and backoff and the
 paper wrapper; `tests/test_fills.py` the wait for a fill, the booking rules and
 the five places a position follows a fill (ADR-019); `tests/test_candles.py` the cache paths; `tests/test_artifacts.py`
@@ -383,7 +395,8 @@ field on `Settings` in `settings.py`, with a description and, where a wrong
 value is dangerous, a range. List it in `EXAMPLE_SECTIONS` and regenerate
 `.env.example` with the command printed at the top of that file; a test
 fails if the two drift. Fixed strategy constants (lookbacks, EMA lengths)
-live in `indicators.py`. Anything that changes the meaning of past
+are the defaults of `StrategyParams` in `params.py`, which also carries the
+settings knobs a rule reads (ADR-021). Anything that changes the meaning of past
 ledger rows (fees, starting cash) deserves a note in the commit body.
 
 ## 7. Known rough edges

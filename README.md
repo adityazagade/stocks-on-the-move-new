@@ -104,7 +104,8 @@ src/stocks_on_the_move/
   momentum.py     entry point: settings, weekday guard, login, RunContext, pipeline.run
   pipeline.py     the twelve weekly steps and run(ctx) (ADR-020)
   rules.py        regime, filter chain and ranking, exit rules, ATR sizing
-  indicators.py   strategy constants and the pure computations on prices
+  indicators.py   the pure computations on prices and the per-instrument Snapshot (ADR-021)
+  params.py       StrategyParams: the code's constants and the operator's knobs
   execution.py    prices, order placement, the wait for a fill, booking (ADR-019)
   universe.py     the symbols the strategy may hold
   ledger.py       the portfolio snapshot and the two ledgers (ADR-004)

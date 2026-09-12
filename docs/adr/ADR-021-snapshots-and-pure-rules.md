@@ -1,6 +1,6 @@
 # ADR-021: One snapshot per symbol, and rules that are pure functions of it
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -195,7 +195,42 @@ vectorised.
 
 ## Implementation Status
 
-Proposed; nothing implemented.
+Implemented on 2026-09-12, one pull request, golden expected files untouched.
+
+- **`StrategyParams`** lives in `params.py`, not `rules.py` as the Decision
+  said: `indicators.py` needs it to build a snapshot and `rules.py` imports
+  `indicators.py`, so the parameters sit below both. Its knob fields default
+  to the `Settings` defaults read off the model, so the two cannot drift; a
+  test asserts `from_settings` on default settings equals `StrategyParams()`.
+  The two moving-average periods are named `trend_ma_period` and
+  `regime_ma_period` from the start, the names ADR-024 planned.
+- **`Snapshot`** in `indicators.py`: rows, last, the trend EMA, ATR, 20-day
+  volume, the rolling high over the stop window, the score triple,
+  `enough_history`, the closes, and `error` for a frame that could not be
+  fetched or built (`Snapshot.failed`). `composite_momentum` is public and
+  takes the params.
+- **Rules** in `rules.py`: `regime`, `evaluate`, `rank`, `exit_check`,
+  `trailing_stop`, `size`, each a function of a snapshot and the params. The
+  two log lines they keep, "Not enough candles for trailing stop" and "Not
+  enough data to rank", are the ones the old code had.
+- **Gather** in `pipeline.py`: `gather_snapshots(ctx, instruments)` fills
+  `ctx.snapshots` for the universe and every holding, skipping symbols
+  already gathered, so the steps call it with no instruments to be sure a
+  direct call has its holdings covered; a fetch that throws is a failed
+  snapshot and a WARNING. `index_snapshot` reads the index over its own
+  window. `rank_step` gathers, evaluates into `universe.csv` and ranks.
+  `size_for` reaches a gathered snapshot for resize and the buy loop, and a
+  failed snapshot's own error text goes in the "size calc error" line, so the
+  message for a holding without an instrument reads as before.
+- **Context**: `snapshots` and an optional `params` override on
+  `RunContext`; `strategy_params(ctx)` resolves it.
+- **Tests**: `tests/test_rules.py` (seventeen) over snapshots built from
+  synthetic candles: params, snapshot fields, the score, regime, every
+  exclusion reason, ranking order, the trailing stop, every exit reason,
+  sizing and its refusals. Two pipeline tests cover the gather: a fetch that
+  throws becomes an error row, and a second call fetches nothing new. The
+  context-based rule tests are gone. 238 tests pass; `ty` clean.
+- **Equivalence held**: the golden expected files did not move.
 
 ## Notes
 

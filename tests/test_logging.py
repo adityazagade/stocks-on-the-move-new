@@ -12,8 +12,7 @@ from fakes import FakeBroker, trending_closes
 from stocks_on_the_move import logging_setup as ls
 from stocks_on_the_move.broker import KiteBroker, PaperBroker
 from stocks_on_the_move.ledger import init_cash_balance
-from stocks_on_the_move.pipeline import resize_positions, run
-from stocks_on_the_move.rules import rank_universe
+from stocks_on_the_move.pipeline import rank_step, resize_positions, run
 from stocks_on_the_move.settings import Settings
 from stocks_on_the_move.universe import StaticUniverse
 from test_pipeline import DRIFTS, TODAY, bull_market
@@ -59,8 +58,8 @@ def test_a_swallowed_ranking_error_is_a_warning_naming_symbol_and_type(make_cont
     broker = BrokenBroker()
     broker.add_equity("X", 1, [1.0], end=TODAY)
     ctx = make_context(broker)
-    with caplog.at_level(logging.WARNING, logger="stocks_on_the_move.rules"):
-        rank_universe(ctx, broker.instruments("NSE"))
+    with caplog.at_level(logging.WARNING, logger="stocks_on_the_move.pipeline"):
+        rank_step(ctx, broker.instruments("NSE"))
     assert "X skipped – RuntimeError: boom" in caplog.text
 
 
@@ -109,10 +108,10 @@ def test_console_at_warning_while_the_run_file_keeps_debug(make_context, clean_p
         assert secret not in log_text and secret not in console
 
 
-def test_rank_universe_stays_quiet_at_info_when_nothing_is_wrong(make_context, caplog):
+def test_the_rank_step_stays_quiet_at_warning_when_nothing_is_wrong(make_context, caplog):
     broker = FakeBroker()
     broker.add_equity("GOOD", 1, trending_closes(150, daily=0.002), end=TODAY)
     ctx = make_context(broker)
-    with caplog.at_level(logging.WARNING, logger="stocks_on_the_move.rules"):
-        rank_universe(ctx, broker.instruments("NSE"))
+    with caplog.at_level(logging.WARNING, logger="stocks_on_the_move.pipeline"):
+        rank_step(ctx, broker.instruments("NSE"))
     assert caplog.records == []

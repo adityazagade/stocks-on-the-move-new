@@ -4,20 +4,13 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
 import pandas as pd
 import pytest
 
 from stocks_on_the_move.execution import gross_cost_for_buy, net_proceeds_for_sell
-from stocks_on_the_move.indicators import (
-    LOOKBACK_LONG,
-    REG_LOOKBACK,
-    TRADING_DAYS_YR,
-    _composite_momentum,
-    annualise,
-    atr,
-)
+from stocks_on_the_move.indicators import annualise, atr
 from stocks_on_the_move.ledger import read_portfolio, write_portfolio
+from stocks_on_the_move.params import StrategyParams
 from stocks_on_the_move.universe import base_symbol, series_of
 
 # ── symbol / series helpers ──────────────────────────────────────────────
@@ -70,8 +63,9 @@ def test_buy_cost_and_sell_proceeds_bracket_the_notional(settings):
 
 
 def test_annualise_inverts_daily_log_slope():
-    daily = math.log(1.5) / TRADING_DAYS_YR  # +50 % over one trading year
-    assert annualise(daily) == pytest.approx(0.5)
+    days = StrategyParams().trading_days_yr
+    daily = math.log(1.5) / days  # +50 % over one trading year
+    assert annualise(daily, days) == pytest.approx(0.5)
     assert annualise(0.0) == 0.0
 
 
@@ -81,17 +75,3 @@ def test_atr_constant_range():
     assert atr(df, period=20) == pytest.approx(4.0)
     assert math.isnan(atr(pd.DataFrame(), 20))
     assert math.isnan(atr(df.head(1), 20))  # one bar -> no true range after the shift
-
-
-def test_composite_momentum_perfect_log_linear_uptrend():
-    n = max(LOOKBACK_LONG, REG_LOOKBACK) + 10
-    closes = pd.Series(100.0 * np.exp(0.001 * np.arange(n)))  # exactly 0.1 %/day in log space
-    score, ann, r2 = _composite_momentum(closes)
-    assert r2 == pytest.approx(1.0)
-    assert ann == pytest.approx(annualise(0.001))
-    assert score > 0
-
-
-def test_composite_momentum_insufficient_data():
-    closes = pd.Series(np.linspace(100, 110, 20))
-    assert all(math.isnan(v) for v in _composite_momentum(closes))
