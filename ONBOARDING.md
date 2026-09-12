@@ -304,6 +304,12 @@ fixtures are seeded random walks, not market data, because the repository is
 public; `make_fixtures.py` documents the role each instrument plays and is
 re-run only deliberately, followed by `--update-golden`.
 
+**The assistant contract.** `CLAUDE.md` at the repository root is the
+eighty-line summary of the rules a coding assistant must follow here
+(ADR-014); Claude Code reads it at the start of every session. It is a
+summary, not the source: any ADR that changes a listed rule updates it in
+the same commit.
+
 **Decisions.** Every change beyond a typo starts with an Architecture
 Decision Record in `docs/adr/`. Draft it as Proposed, commit it on its own,
 wait for it to be Accepted, then implement, naming the ADR in every commit.

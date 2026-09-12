@@ -136,4 +136,27 @@ not add a shared `.claude/settings.json`.
 
 ## Implementation Status
 
-Not started.
+Code complete on 2026-09-12; awaiting plan step 2 by the owner.
+
+- `CLAUDE.md` is committed at the repository root, 71 lines: one paragraph on
+  what the project is and that it moves money; ten non-negotiable rules; the
+  commands; where to read next; the maintenance rule. `ONBOARDING.md`
+  section 6 points to it.
+- The rule list is the Decision's eight plus two that later ADRs made
+  rules: never log or print a credential (ADR-005, ADR-012), and strategy
+  code holds no module state and reaches the broker only through the
+  `Broker` protocol, tested against the fake (ADR-008). The pandas rule
+  names the golden test as the evidence the bound moves on (ADR-009) and
+  says not to merge a bot pull request that widens it, after Dependabot's
+  first run did exactly that (ADR-013, #13). The commands include the type
+  check (ADR-010), the golden-file update flag (ADR-009) and the settings
+  check (ADR-007), which did not exist when the ADR was drafted.
+- Plan step 2 is the owner's: a fresh Claude Code session, memory disabled
+  or on another machine, asked to "add a feature", must answer with a
+  Proposed ADR rather than code. Status moves to Implemented after that.
+
+## Notes
+
+The assistant's local memory for this project already held the ADR-first
+rule and the uv preference; `CLAUDE.md` now carries both from the checkout,
+so a session that has neither still gets them.
