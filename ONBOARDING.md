@@ -22,7 +22,8 @@ A weekly momentum-rotation strategy for NSE equities, after Andreas Clenow's
 Orders go through Zerodha Kite Connect. State lives in four CSV files in the
 working directory. There is no database, no scheduler and no UI. The whole
 strategy is one module, `src/stocks_on_the_move/momentum.py`, run top to
-bottom by `main()`; the Kite login lives beside it in `kite_auth.py`.
+bottom by `main()`. Beside it sit `settings.py` (every knob, ADR-007) and
+`kite_auth.py` (the Kite login, ADR-005).
 
 Where this port deviates from the book, and it matters when you read the code:
 
@@ -185,10 +186,14 @@ the best bid or ask from a `quote()` depth call. `series_of` and
 **All scheduling is IST.** Weekday checks and ISO-week parity use
 `ist_now()`. Candle dates are timezone-aware IST.
 
-**Configuration is read at import time.** Every `os.getenv` sits at module
-level, and importing the module also creates `CACHE_DIR` and configures
-logging. Environment variables must be set before the first import; see
-`tests/conftest.py` for how the tests do it.
+**Configuration is one validated object.** `settings.Settings` (ADR-007) holds
+every environment knob with its type, default and, where a wrong value is
+dangerous, its range. `main()` loads it once with `Settings.from_env()` and
+installs it as `momentum.SETTINGS`; importing the module reads nothing and
+creates nothing. A bad value refuses to start with the variable named;
+`uv run --env-file .env python -m stocks_on_the_move.settings --check` shows
+what a run would see. Tests build one with `Settings.from_values(...)`; see
+`tests/conftest.py`.
 
 **Module-level mutable state.** `CASH_BAL`, `sold_symbols`, `TOKEN_CACHE`,
 `NIFTY500_SET` and `NIFTY_FULL_SET` are globals mutated during a run. They
@@ -224,8 +229,9 @@ rule sets E/W/F/I/UP/B/C4/SIM. `archive/` is excluded and must stay that way.
 The pre-commit hooks run ruff on every commit; `uv run pre-commit run
 --all-files` runs them by hand.
 
-**Tests.** `tests/test_kite_auth.py` covers the login module against a fake
-client. `tests/test_momentum.py` covers the pure helpers: symbol parsing,
+**Tests.** `tests/test_settings.py` covers parsing, ranges and the generated
+`.env.example`. `tests/test_kite_auth.py` covers the login module against a
+fake client. `tests/test_momentum.py` covers the pure helpers: symbol parsing,
 portfolio CSV round-trips, fee arithmetic, ATR and the momentum score.
 Nothing that takes a `KiteConnect` is tested. If you add such a test, pass a
 small fake object exposing the methods you need, for example an `ltp`
@@ -243,11 +249,13 @@ Look at `git log` for the house style. Do not create `momentum_v5.py`; the
 `archive/` folder exists because that used to be how versions were tracked,
 and git now does that job.
 
-**Changing strategy parameters.** Anything a user should be able to tune
-belongs in the configuration block at the top of the module as an
-`os.getenv` with a default, and in `.env.example` with the same default.
-Anything that changes the meaning of past ledger rows (fees, starting cash)
-deserves a note in the commit body.
+**Changing strategy parameters.** Anything a user should be able to tune is a
+field on `Settings` in `settings.py`, with a description and, where a wrong
+value is dangerous, a range. List it in `EXAMPLE_SECTIONS` and regenerate
+`.env.example` with the command printed at the top of that file; a test
+fails if the two drift. Fixed strategy constants (lookbacks, EMA lengths)
+stay at the top of `momentum.py`. Anything that changes the meaning of past
+ledger rows (fees, starting cash) deserves a note in the commit body.
 
 ## 7. Known rough edges
 

@@ -377,22 +377,3 @@ def test_login_timeout_is_a_clear_error(tmp_path):
     settings = _settings(tmp_path, redirect_port=_free_port(), login_timeout=0.3)
     with pytest.raises(RuntimeError, match="did not complete within 0 s.*redirect URL"):
         _authenticate(FakeKite("key"), settings, io.StringIO())
-
-
-def test_auth_settings_from_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("KITE_SESSION_FILE", str(tmp_path / "s.json"))
-    monkeypatch.setenv("KITE_REDIRECT_PORT", "0")
-    monkeypatch.setenv("KITE_OPEN_BROWSER", "false")
-    monkeypatch.setenv("KITE_FORGET_SESSION", "1")
-    s = ka.AuthSettings.from_env()
-    assert (s.session_file, s.redirect_port, s.open_browser, s.forget_session) == (tmp_path / "s.json", 0, False, True)
-
-    for name in ("KITE_SESSION_FILE", "KITE_REDIRECT_PORT", "KITE_OPEN_BROWSER", "KITE_FORGET_SESSION"):
-        monkeypatch.delenv(name)
-    s = ka.AuthSettings.from_env()
-    assert (s.session_file, s.redirect_port, s.open_browser, s.forget_session) == (
-        ka.DEFAULT_SESSION_FILE,
-        ka.DEFAULT_REDIRECT_PORT,
-        True,
-        False,
-    )

@@ -38,7 +38,9 @@ opens it in your browser and waits for Kite to redirect to
 Kite developer console; if it is not, paste the request token or the
 redirected URL at the prompt. The session is cached under
 `~/.config/stocks-on-the-move/` until 06:00 IST, so later runs the same day
-log in silently (ADR-005).
+log in silently (ADR-005). Configuration comes from the environment and is
+validated at startup; a bad value stops the run with the variable named
+(ADR-007).
 
 Useful switches (the full list, with defaults, is in `.env.example`):
 
@@ -67,6 +69,8 @@ uv run pytest                 # unit tests for the pure strategy helpers
 uv run ruff check --fix .     # lint: pyflakes, isort, pyupgrade, bugbear, ...
 uv run ruff format .          # format
 uv run pre-commit install     # run the above automatically on every commit
+uv run python -m stocks_on_the_move.settings --check    # the configuration a run would see
+uv run python -m stocks_on_the_move.settings --example > .env.example   # after adding a setting
 ```
 
 Dependency changes go through uv so that `uv.lock` stays authoritative:
@@ -85,6 +89,7 @@ Every change beyond a typo starts with an Architecture Decision Record in
 ```
 src/stocks_on_the_move/
   momentum.py     the strategy (formerly test_updated_v4.py)
+  settings.py     every environment knob, validated once at startup (ADR-007)
   kite_auth.py    Kite login: session cache, redirect listener, paste (ADR-005)
   __main__.py     python -m entry point
 tests/            pytest suite

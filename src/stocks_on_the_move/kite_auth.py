@@ -45,8 +45,6 @@ IST = ZoneInfo("Asia/Kolkata")
 # Kite invalidates every access token at this wall-clock time on the day after it was issued.
 TOKEN_EXPIRY_IST = dtime(6, 0)
 
-DEFAULT_SESSION_FILE = Path.home() / ".config" / "stocks-on-the-move" / "kite_session.json"
-DEFAULT_REDIRECT_PORT = 8765
 LOGIN_TIMEOUT_SEC = 300.0
 _POLL_SEC = 0.5
 _BARE_TOKEN = re.compile(r"[A-Za-z0-9_-]{8,}")
@@ -56,31 +54,15 @@ def ist_now() -> datetime:
     return datetime.now(IST)
 
 
-def _flag(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None or not raw.strip():
-        return default
-    return raw.strip().lower() not in ("0", "false", "no", "n", "off")
-
-
 @dataclass(frozen=True)
 class AuthSettings:
-    """The ADR-005 knobs. ``from_env`` reads them; tests construct them directly."""
+    """The ADR-005 knobs. ``momentum.authenticate`` builds one from ``Settings`` (ADR-007)."""
 
-    session_file: Path = DEFAULT_SESSION_FILE
-    redirect_port: int = DEFAULT_REDIRECT_PORT  # 0 disables the listener
-    open_browser: bool = True
+    session_file: Path
+    redirect_port: int  # 0 disables the listener
+    open_browser: bool
     forget_session: bool = False
     login_timeout: float = LOGIN_TIMEOUT_SEC
-
-    @classmethod
-    def from_env(cls) -> AuthSettings:
-        return cls(
-            session_file=Path(os.getenv("KITE_SESSION_FILE") or DEFAULT_SESSION_FILE).expanduser(),
-            redirect_port=int(os.getenv("KITE_REDIRECT_PORT") or DEFAULT_REDIRECT_PORT),
-            open_browser=_flag("KITE_OPEN_BROWSER", True),
-            forget_session=_flag("KITE_FORGET_SESSION", False),
-        )
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -410,7 +392,7 @@ def authenticate(
     api_key: str,
     api_secret: str,
     *,
-    settings: AuthSettings | None = None,
+    settings: AuthSettings,
     kite_factory: Callable[..., KiteConnect] = KiteConnect,
     call: Callable[..., Any] = _direct_call,
     now: Callable[[], datetime] = ist_now,
@@ -421,7 +403,6 @@ def authenticate(
     ``call`` wraps the one liveness request (pass the throttled ``kite_call``);
     ``kite_factory``, ``now`` and ``stdin`` exist for the tests.
     """
-    settings = settings or AuthSettings.from_env()
     stdin = sys.stdin if stdin is None else stdin
     path = settings.session_file
 

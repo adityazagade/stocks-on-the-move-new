@@ -1,5 +1,7 @@
 """Smoke tests for the pure, broker-independent parts of the strategy."""
 
+from __future__ import annotations
+
 import math
 
 import numpy as np
@@ -49,7 +51,7 @@ def test_read_portfolio_missing_file_and_bad_rows(tmp_path):
 
 def test_buy_cost_and_sell_proceeds_bracket_the_notional():
     price, qty = 100.0, 10
-    friction = m.FEES_PCT + m.SLIPPAGE_PCT
+    friction = m.SETTINGS.fees_pct + m.SETTINGS.slippage_pct
     assert m.gross_cost_for_buy(price, qty) == pytest.approx(1000 * (1 + friction))
     assert m.net_proceeds_for_sell(price, qty) == pytest.approx(1000 * (1 - friction))
 
