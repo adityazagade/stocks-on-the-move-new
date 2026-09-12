@@ -24,6 +24,7 @@ from stocks_on_the_move.rules import (
     rank_universe,
     size_position,
 )
+from stocks_on_the_move.universe import StaticUniverse
 
 TODAY = EVEN_WEEK_WEDNESDAY.date()
 NIFTY = Instrument(256265, "NIFTY 50", "NSE", "INDICES", "EQ")
@@ -247,7 +248,7 @@ DRIFTS = {"AAA": 0.004, "BBB": 0.003, "CCC": 0.002, "DDD": 0.001, "EEE": 0.0005}
 def test_run_buys_the_top_ranked_names_in_a_bull_market(make_context, caplog):
     broker = bull_market(DRIFTS)
     ctx = make_context(broker, cut_off_pct=0.5)  # top 2 of 5
-    ctx.universe = lambda: set(DRIFTS)
+    ctx.universe = StaticUniverse(DRIFTS)
 
     with caplog.at_level(logging.INFO, logger=LOG):
         run(ctx)
@@ -270,7 +271,7 @@ def test_run_sits_out_a_bear_market(make_context, caplog):
     broker = bull_market(DRIFTS)
     broker.candles[NIFTY.token] = make_candles(trending_closes(260, start=20_000.0, daily=-0.002), end=TODAY)
     ctx = make_context(broker, cut_off_pct=0.5)
-    ctx.universe = lambda: set(DRIFTS)
+    ctx.universe = StaticUniverse(DRIFTS)
 
     with caplog.at_level(logging.INFO, logger=LOG):
         run(ctx)
@@ -296,7 +297,7 @@ def test_run_kill_switch_liquidates_everything(make_context):
 
 
 def test_run_aborts_on_an_empty_universe(ctx, caplog):
-    ctx.universe = set
+    ctx.universe = StaticUniverse(())
     with caplog.at_level(logging.ERROR, logger=LOG):
         run(ctx)
     assert "Empty universe" in caplog.text
@@ -446,7 +447,7 @@ def test_resize_records_every_holding_with_its_action(make_context):
 def test_run_writes_the_whole_artifact_set(make_context, caplog):
     broker = bull_market(DRIFTS)
     ctx = make_context(broker, cut_off_pct=0.5, artifacts=True)
-    ctx.universe = lambda: set(DRIFTS)
+    ctx.universe = StaticUniverse(DRIFTS)
     ctx.artifacts.attach_log(logging.getLogger(LOG))
 
     with caplog.at_level(logging.INFO, logger=LOG):
@@ -508,7 +509,7 @@ def test_run_writes_the_whole_artifact_set(make_context, caplog):
 
 def test_run_records_an_aborted_status_on_an_empty_universe(make_context):
     ctx = make_context(artifacts=True)
-    ctx.universe = set
+    ctx.universe = StaticUniverse(())
     run(ctx)
     path = ctx.artifacts.path
     meta = json.loads((path / "run.json").read_text())

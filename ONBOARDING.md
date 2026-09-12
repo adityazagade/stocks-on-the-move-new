@@ -111,7 +111,7 @@ behind each step.
 | 2 | Load state | `read_portfolio`, `init_cash_balance` | First step of `run(ctx)`. Cash is reconstructed from ledgers, never stored |
 | 3 | Token cache | `build_token_cache` | One `instruments("NSE")` call into `ctx.tokens`, then everything is a dict lookup |
 | 3.5 | Kill switch | `liquidate_all` | Sells everything, writes `OUT_FILE`, returns |
-| 4 | Universe | `nse_universe_symbols`, or `ctx.universe` | Public CSVs from NSE archives, no auth; tests inject a set. Empty universe aborts the run |
+| 4 | Universe | `NseArchives.symbols`, or the `UniverseSource` on the context | Public CSVs from NSE archives, no auth, with a last-good copy under `CACHE_DIR` for the day NSE is down (ADR-020); tests inject a `StaticUniverse`. Empty universe aborts the run |
 | 5 | Regime | `index_trend` | Index close vs 200-day EMA. Only gates buys, never sells |
 | 6 | Rank | `get_universe`, `rank_universe`, `_composite_momentum` | Filters then scores; see section 4 |
 | 7 | Exits | `prune_portfolio`, `should_exit`, `_trailing_stop_hit` | Runs every week, bull or bear |
@@ -169,6 +169,12 @@ buys as many shares as the cash covers rather than skipping the name.
 `429 / too many requests` with exponential backoff and raises `BrokerError`
 when the retries run out. Never touch `KiteConnect` outside that adapter;
 no module but `broker.py` and `kite_auth.py` imports `kiteconnect`.
+
+**The universe list has a last-good copy.** `NseArchives` writes every
+successful fetch to `CACHE_DIR/universe-<name>.txt` and reads it back, with a
+WARNING naming its age, on the day NSE archives are unreachable (ADR-020). An
+empty universe still aborts the run; the copy only stands in for an outage,
+never for a missing list.
 
 **Instrument tokens come from one `instruments()` download per run.**
 `token_of` is a lookup in `ctx.tokens` with a single fallback scan, and
@@ -251,6 +257,7 @@ work.
 | `cash_ledger.csv` | you, or `ENV_CASHFLOW` | step 2 | `date,amount,note` |
 | `trades_ledger.csv` | every confirmed fill | step 2 | Append-only; filled quantity and the broker's average price (ADR-019) |
 | `.cache_candles/<token>.csv` | `CandleStore` | `CandleStore` | `date,open,high,low,close,volume`; git-ignored, safe to delete |
+| `.cache_candles/universe-<name>.txt` | `NseArchives`, on every successful fetch | `NseArchives`, when NSE is unreachable | The last-good constituents list, dated on its first line (ADR-020); git-ignored, safe to delete |
 | `runs/<date>/<time>-<mode>/` | every step, as it completes | you | Eleven files per run (ADR-006; `orders.csv` since ADR-019); git-ignored; `runs/latest` is a symlink to the newest |
 
 The gap between step 12 and the next run's step 2 is deliberate: promoting

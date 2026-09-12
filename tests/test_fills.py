@@ -14,6 +14,7 @@ from stocks_on_the_move.execution import safe_buy, safe_sell
 from stocks_on_the_move.ledger import init_cash_balance, read_portfolio, write_portfolio
 from stocks_on_the_move.pipeline import prune_portfolio, raise_cash_if_needed, resize_positions, run
 from stocks_on_the_move.rules import RankItem
+from stocks_on_the_move.universe import StaticUniverse
 
 LOG = "stocks_on_the_move"  # the package logger: fills and the pipeline log from different modules
 TODAY = EVEN_WEEK_WEDNESDAY.date()
@@ -383,7 +384,7 @@ def test_buys_hold_what_filled_not_what_was_asked(make_context):
     broker.script_fills("AAA", ("OPEN", 1, broker.ltps["NSE:AAA"]))  # one share of the top pick, then the cancel
     broker.script_fills("BBB", ("REJECTED", 0, 0.0, "Circuit limit"))
     ctx = make_context(broker, cut_off_pct=0.5, artifacts=True, fill_poll_seconds=1.0, fill_timeout_seconds=1)
-    ctx.universe = lambda: set(DRIFTS)
+    ctx.universe = StaticUniverse(DRIFTS)
 
     run(ctx)
 
@@ -408,7 +409,7 @@ def test_an_exit_that_does_not_fill_leaves_less_cash_for_the_buys(make_context, 
             broker.script_fills("ZZZ", ("REJECTED", 0, 0.0, "Market closed"))
         paths = {name: str(tmp_path / f"{tag}_{name}.csv") for name in files}
         ctx = make_context(broker, cut_off_pct=0.5, starting_cash=1_000.0, **paths)  # the exit is most of the money
-        ctx.universe = lambda: set(DRIFTS)
+        ctx.universe = StaticUniverse(DRIFTS)
         write_portfolio(ctx.settings.portfolio_file, {"ZZZ": 100})
         run(ctx)
         bought = sum(int(r["qty"]) for r in ledger_rows(ctx.settings.trades_ledger_file) if r["side"] == "BUY")

@@ -32,7 +32,7 @@ from stocks_on_the_move.reporting import (
     ranking_rows,
 )
 from stocks_on_the_move.rules import RankItem, exit_reasons, index_trend, rank_universe, size_position
-from stocks_on_the_move.universe import get_universe, nse_universe_symbols
+from stocks_on_the_move.universe import NseArchives, get_universe
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +329,8 @@ def run(ctx: RunContext) -> None:
         return
 
     # 4) The symbols the strategy may hold (NSE archives unless the context says otherwise)
-    symbols = ctx.universe() if ctx.universe is not None else nse_universe_symbols(s)
+    source = ctx.universe if ctx.universe is not None else NseArchives(s)
+    symbols = source.symbols()
     logger.info("Universe symbols loaded: %d", len(symbols))
     art.record(universe_size=len(symbols))
     if not symbols:

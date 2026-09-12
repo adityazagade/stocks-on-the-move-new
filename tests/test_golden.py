@@ -28,6 +28,7 @@ from stocks_on_the_move.broker import Candle, Instrument, Quote
 from stocks_on_the_move.candles import CandleStore
 from stocks_on_the_move.context import RunContext
 from stocks_on_the_move.pipeline import run
+from stocks_on_the_move.universe import StaticUniverse
 
 GOLDEN = Path(__file__).parent / "fixtures" / "golden"
 EXPECTED = GOLDEN / "expected"
@@ -106,7 +107,7 @@ def test_pipeline_matches_the_golden_files(config, tmp_path, make_settings, upda
         candles=CandleStore(broker, settings.cache_dir, sleep_sec=0.0, sleep=lambda _: None, today=as_of.date),
         now=lambda: as_of,
         paper=True,
-        universe=lambda: set((GOLDEN / "nifty500.txt").read_text().split()),
+        universe=StaticUniverse((GOLDEN / "nifty500.txt").read_text().split()),
         artifacts=artifacts,
     )
 

@@ -15,6 +15,7 @@ from stocks_on_the_move.ledger import init_cash_balance
 from stocks_on_the_move.pipeline import resize_positions, run
 from stocks_on_the_move.rules import rank_universe
 from stocks_on_the_move.settings import Settings
+from stocks_on_the_move.universe import StaticUniverse
 from test_pipeline import DRIFTS, TODAY, bull_market
 
 
@@ -93,7 +94,7 @@ def test_console_at_warning_while_the_run_file_keeps_debug(make_context, clean_p
     ls.configure_logging("WARNING")
     broker = PaperBroker(bull_market(DRIFTS))  # its unsent orders are the DEBUG lines a real paper run has
     ctx = make_context(broker, cut_off_pct=0.5, log_level="WARNING", artifacts=True)
-    ctx.universe = lambda: set(DRIFTS)
+    ctx.universe = StaticUniverse(DRIFTS)
     ctx.artifacts.attach_log()
 
     run(ctx)
