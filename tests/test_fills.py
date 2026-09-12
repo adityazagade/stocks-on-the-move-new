@@ -11,9 +11,11 @@ from fakes import EVEN_WEEK_WEDNESDAY, FakeBroker, make_candles, trending_closes
 from stocks_on_the_move import momentum as m
 from stocks_on_the_move.broker import Instrument, PaperBroker, Quote
 from stocks_on_the_move.context import Fill, RunContext, build_token_cache, filled_qty
+from stocks_on_the_move.execution import safe_buy, safe_sell
 from stocks_on_the_move.ledger import init_cash_balance, read_portfolio, write_portfolio
+from stocks_on_the_move.rules import RankItem
 
-LOG = "stocks_on_the_move.momentum"
+LOG = "stocks_on_the_move"  # the package logger: fills and the pipeline log from different modules
 TODAY = EVEN_WEEK_WEDNESDAY.date()
 NIFTY = Instrument(256265, "NIFTY 50", "NSE", "INDICES", "EQ")
 DRIFTS = {"AAA": 0.004, "BBB": 0.003, "CCC": 0.002, "DDD": 0.001, "EEE": 0.0005}
@@ -29,8 +31,8 @@ def read_table(path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def rank(symbol: str, *, close: float = 100.0, ema100: float = 90.0) -> m.RankItem:
-    return m.RankItem(symbol, 0.5, 0.3, 0.9, close, ema100)
+def rank(symbol: str, *, close: float = 100.0, ema100: float = 90.0) -> RankItem:
+    return RankItem(symbol, 0.5, 0.3, 0.9, close, ema100)
 
 
 def funded(ctx: RunContext, cash: float = 10_000.0, **ltps: float) -> RunContext:
@@ -71,7 +73,7 @@ def test_a_fill_on_the_first_poll_never_sleeps(make_context):
     ctx.sleep = sleeps.append
     funded(ctx, TCS=100.0)
 
-    fill = sent(m.safe_buy(ctx, "TCS", 10))
+    fill = sent(safe_buy(ctx, "TCS", 10))
 
     assert fill == Fill("TCS", "BUY", "FAKE-0001", "COMPLETE", 10, 10, 100.0)
     assert not fill.partial
@@ -85,7 +87,7 @@ def test_the_wait_polls_at_the_interval_until_the_status_is_terminal(make_contex
     funded(ctx, TCS=100.0)
     ctx.broker.script_fills("TCS", ("OPEN", 0, 0.0), ("OPEN", 4, 99.5), ("COMPLETE", 10, 99.75))
 
-    fill = sent(m.safe_buy(ctx, "TCS", 10))
+    fill = sent(safe_buy(ctx, "TCS", 10))
 
     assert (fill.status, fill.filled, fill.price) == ("COMPLETE", 10, 99.75)
     assert sleeps == [2.0, 2.0]  # between the three polls, none before the first
@@ -107,7 +109,7 @@ def test_the_timeout_cancels_and_books_what_filled(make_context, caplog):
     ctx.broker.script_fills("TCS", ("OPEN", 4, 99.0))  # four filled, then nothing more, ever
 
     with caplog.at_level(logging.WARNING, logger=LOG):
-        fill = sent(m.safe_buy(ctx, "TCS", 10))
+        fill = sent(safe_buy(ctx, "TCS", 10))
 
     assert ("cancel_order", "FAKE-0001") in ctx.broker.calls
     assert (fill.status, fill.filled, fill.price, fill.partial) == ("CANCELLED", 4, 99.0, True)
@@ -125,7 +127,7 @@ def test_a_cancel_that_races_a_fill_books_the_fill(make_context):
     funded(ctx, TCS=100.0)
     ctx.broker.script_fills("TCS", ("OPEN", 0, 0.0), ("OPEN", 0, 0.0), ("COMPLETE", 10, 100.5))
 
-    fill = sent(m.safe_buy(ctx, "TCS", 10))
+    fill = sent(safe_buy(ctx, "TCS", 10))
 
     assert ("cancel_order", "FAKE-0001") in ctx.broker.calls
     assert (fill.status, fill.filled, fill.price) == ("COMPLETE", 10, 100.5)
@@ -143,7 +145,7 @@ def test_an_order_that_will_neither_fill_nor_cancel_is_booked_with_a_loud_warnin
     ctx.broker.script_fills("TCS", ("OPEN", 3, 100.0))
 
     with caplog.at_level(logging.WARNING, logger=LOG):
-        fill = sent(m.safe_buy(ctx, "TCS", 10))
+        fill = sent(safe_buy(ctx, "TCS", 10))
 
     assert (fill.status, fill.filled) == ("OPEN", 3)
     assert len(polls(ctx.broker)) == 2
@@ -159,7 +161,7 @@ def test_a_paper_run_waits_for_nothing(make_context):
     init_cash_balance(ctx)
     ctx.portfolio.cash = 10_000.0
 
-    fill = sent(m.safe_buy(ctx, "TCS", 10))
+    fill = sent(safe_buy(ctx, "TCS", 10))
 
     assert (fill.order_id, fill.status, fill.filled, fill.price) == ("PAPER-0001", "COMPLETE", 10, 100.0)
     assert sleeps == [] and inner.orders == []
@@ -174,7 +176,7 @@ def test_a_rejection_books_nothing_and_names_the_reason(make_context, caplog):
     ctx.broker.script_fills("TCS", ("REJECTED", 0, 0.0, "Insufficient funds"))
 
     with caplog.at_level(logging.WARNING, logger=LOG):
-        fill = sent(m.safe_buy(ctx, "TCS", 10))
+        fill = sent(safe_buy(ctx, "TCS", 10))
 
     assert fill == Fill("TCS", "BUY", "FAKE-0001", "REJECTED", 10, 0, 0.0)
     assert filled_qty(fill) == 0 and filled_qty(None) == 0
@@ -190,7 +192,7 @@ def test_a_fill_without_an_average_price_is_booked_at_the_price_seen(make_contex
     ctx.broker.script_fills("TCS", ("COMPLETE", 10, 0.0))
 
     with caplog.at_level(logging.WARNING, logger=LOG):
-        fill = sent(m.safe_buy(ctx, "TCS", 10))
+        fill = sent(safe_buy(ctx, "TCS", 10))
 
     assert (fill.filled, fill.price) == (10, 100.0)
     assert "BUY TCS: 10 filled but no average price came back; booking at 100.00" in caplog.text
@@ -203,7 +205,7 @@ def test_a_live_row_carries_the_average_price_and_no_slippage(make_context):
     ctx.broker.script_fills("TCS", ("COMPLETE", 10, 100.4))
     ctx.paper = False
 
-    fill = sent(m.safe_buy(ctx, "TCS", 10))
+    fill = sent(safe_buy(ctx, "TCS", 10))
 
     assert fill.price == 100.4
     (row,) = ledger_rows(ctx.settings.trades_ledger_file)
@@ -213,7 +215,7 @@ def test_a_live_row_carries_the_average_price_and_no_slippage(make_context):
 
 def test_a_paper_row_keeps_the_configured_slippage(ctx):
     funded(ctx, TCS=100.0)
-    m.safe_sell(ctx, "TCS", 10)
+    safe_sell(ctx, "TCS", 10)
     (row,) = ledger_rows(ctx.settings.trades_ledger_file)
     assert row["slippage_pct"] == f"{ctx.settings.slippage_pct:.6f}"
     friction = ctx.settings.fees_pct + ctx.settings.slippage_pct
@@ -229,7 +231,7 @@ def test_orders_csv_has_the_order_id_before_the_wait_and_the_verdict_after(make_
     funded(ctx)
 
     with pytest.raises(RuntimeError):
-        m.safe_buy(ctx, "TCS", 10)
+        safe_buy(ctx, "TCS", 10)
 
     (row,) = read_table(ctx.artifacts.path / "orders.csv")
     assert (row["order_id"], row["status"], row["requested_qty"], row["filled_qty"]) == (
@@ -247,8 +249,8 @@ def test_orders_csv_holds_every_order_and_its_verdict(make_context):
     ctx.broker.quotes["NSE:IDEA-BE"] = Quote(last_price=10.0, best_bid=9.9, best_ask=10.1)
     ctx.broker.script_fills("IDEA-BE", ("OPEN", 40, 10.1))
 
-    m.safe_buy(ctx, "TCS", 10)
-    m.safe_buy(ctx, "IDEA-BE", 100)
+    safe_buy(ctx, "TCS", 10)
+    safe_buy(ctx, "IDEA-BE", 100)
 
     rows = read_table(ctx.artifacts.path / "orders.csv")
     assert [(r["symbol"], r["order_type"], r["limit_price"], r["status"], r["filled_qty"]) for r in rows] == [
