@@ -1,0 +1,259 @@
+{
+  "description": "Synthetic golden fixtures (ADR-009). Seeded random walks; no market data.",
+  "generated_on": "2026-09-12",
+  "generator": "tests/fixtures/golden/make_fixtures.py",
+  "seed": 20260912,
+  "candles_end": "2026-09-23",
+  "configs": {
+    "even_week": {
+      "as_of": "2026-09-16T10:00:00+05:30",
+      "iso_week": 38
+    },
+    "odd_week": {
+      "as_of": "2026-09-23T10:00:00+05:30",
+      "iso_week": 39
+    }
+  },
+  "settings": {
+    "starting_cash": 500000,
+    "risk_factor": 0.002,
+    "max_weight": 0.1,
+    "max_positions": 6,
+    "cut_off_pct": 0.4,
+    "min_volume": 10000,
+    "max_atr_pct": 0.1,
+    "exit_multiple": 5.0,
+    "allow_kite_execution": false
+  },
+  "portfolio_before": {
+    "HOLDFAST": 50,
+    "ANCHOR": 2000,
+    "DRIFTER": 150,
+    "CLIFF": 100,
+    "IDEAX-BE": 500
+  },
+  "instruments": [
+    {
+      "symbol": "ALPHA",
+      "token": 1001,
+      "role": "rank_buy",
+      "notes": "strongest trend; first buy"
+    },
+    {
+      "symbol": "BRAVO",
+      "token": 1002,
+      "role": "rank_buy",
+      "notes": ""
+    },
+    {
+      "symbol": "CHARLIE",
+      "token": 1003,
+      "role": "rank_buy",
+      "notes": ""
+    },
+    {
+      "symbol": "DELTA",
+      "token": 1004,
+      "role": "rank_buy",
+      "notes": ""
+    },
+    {
+      "symbol": "ECHO",
+      "token": 1005,
+      "role": "rank_buy",
+      "notes": ""
+    },
+    {
+      "symbol": "FOXTROT",
+      "token": 1006,
+      "role": "rank_buy",
+      "notes": ""
+    },
+    {
+      "symbol": "GOLF",
+      "token": 1007,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "HOTEL",
+      "token": 1008,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "INDIA",
+      "token": 1009,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "JULIET",
+      "token": 1010,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "KILO",
+      "token": 1011,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "LIMA",
+      "token": 1012,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "MIKE",
+      "token": 1013,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "NOVEMBER",
+      "token": 1014,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "OSCAR",
+      "token": 1015,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "PAPA",
+      "token": 1016,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "QUEBEC",
+      "token": 1017,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "ROMEO",
+      "token": 1018,
+      "role": "rank",
+      "notes": ""
+    },
+    {
+      "symbol": "HOLDFAST",
+      "token": 1021,
+      "role": "held_keep",
+      "notes": "held 50, under its ATR size: resize buys"
+    },
+    {
+      "symbol": "ANCHOR",
+      "token": 1026,
+      "role": "held_keep",
+      "notes": "held 2000, over its ATR size: resize sells"
+    },
+    {
+      "symbol": "DRIFTER",
+      "token": 1022,
+      "role": "held_drop",
+      "notes": "held, below EMA-100, sold as unranked"
+    },
+    {
+      "symbol": "CLIFF",
+      "token": 1023,
+      "role": "held_stop",
+      "notes": "held; 12 % off its high on the even-week date, still above EMA-100: trailing stop"
+    },
+    {
+      "symbol": "IDEAX-BE",
+      "token": 1024,
+      "role": "held_be",
+      "notes": "held -BE name, unranked; LIMIT sell at the bid"
+    },
+    {
+      "symbol": "ZETA-BE",
+      "token": 1025,
+      "role": "rank_buy_be",
+      "notes": "-BE name that ranks; LIMIT buy at the ask"
+    },
+    {
+      "symbol": "SLIDER",
+      "token": 1031,
+      "role": "below_ema100",
+      "notes": ""
+    },
+    {
+      "symbol": "SINKER",
+      "token": 1032,
+      "role": "below_ema100",
+      "notes": ""
+    },
+    {
+      "symbol": "FADER",
+      "token": 1033,
+      "role": "below_ema100",
+      "notes": ""
+    },
+    {
+      "symbol": "NEWBIE",
+      "token": 1041,
+      "role": "history",
+      "notes": "60 rows, below MIN_HISTORY"
+    },
+    {
+      "symbol": "ROOKIE",
+      "token": 1042,
+      "role": "history",
+      "notes": ""
+    },
+    {
+      "symbol": "GHOSTLY",
+      "token": 1043,
+      "role": "history",
+      "notes": "listed, no candles at all"
+    },
+    {
+      "symbol": "THINLY",
+      "token": 1051,
+      "role": "volume",
+      "notes": ""
+    },
+    {
+      "symbol": "QUIETLY",
+      "token": 1052,
+      "role": "volume",
+      "notes": ""
+    },
+    {
+      "symbol": "JUMPY",
+      "token": 1061,
+      "role": "atr_pct",
+      "notes": ""
+    },
+    {
+      "symbol": "WILDCAT",
+      "token": 1062,
+      "role": "atr_pct",
+      "notes": ""
+    },
+    {
+      "symbol": "OUTSIDER",
+      "token": 1071,
+      "role": "outside_universe",
+      "notes": "not in nifty500.txt"
+    },
+    {
+      "symbol": "ALPHADR",
+      "token": 1072,
+      "role": "not_equity",
+      "notes": "wrong instrument type"
+    },
+    {
+      "symbol": "NIFTY 50",
+      "token": 256265,
+      "role": "index",
+      "notes": ""
+    }
+  ]
+}
