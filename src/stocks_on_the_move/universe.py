@@ -185,6 +185,11 @@ class NseArchives:
             logger.warning("That copy is more than %d days old; the index may have changed since", STALE_DAYS)
         return members
 
+    def saved_symbols(self) -> set[str] | None:
+        """The last-good copy's members without a fetch, for tools that must not go online (ADR-023)."""
+        saved = self._load()
+        return None if saved is None else saved[1]
+
     def _save(self, members: set[str]) -> None:
         try:
             self.copy_path.parent.mkdir(parents=True, exist_ok=True)

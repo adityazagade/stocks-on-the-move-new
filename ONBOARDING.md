@@ -35,6 +35,7 @@ one module per job under `src/stocks_on_the_move/` (ADR-020):
 | `ledger.py` | the portfolio snapshot and the two ledgers |
 | `reporting.py` | the artifact tables' columns and row builders |
 | `context.py` | `RunContext`, `Portfolio`, `Fill`, the token cache |
+| `backtest.py` | the replay of the pipeline over years of cached candles, with the live rules (ADR-023) |
 | `broker.py`, `candles.py` | the broker boundary and the candle cache (ADR-008) |
 | `artifacts.py`, `settings.py`, `kite_auth.py`, `logging_setup.py` | the run directory (ADR-006), every knob (ADR-007), the Kite login (ADR-005), logging (ADR-015) |
 
@@ -367,6 +368,20 @@ nothing and shows as `SKIP:no_fill` with the broker's message in
 `orders.csv`. A live run with a few limit orders on `BE` names can therefore
 take minutes longer than a paper run, which waits for nothing.
 
+**Backtesting** (ADR-023). `python -m stocks_on_the_move.backtest warm` logs in
+once and fetches five years of daily candles for the universe and the index
+into the same cache the live run reads, plus the instrument list; after that
+everything is offline. `run --from 2021-01-06 --to 2026-09-09 --label baseline`
+replays every trading Wednesday: the pipeline sees candles strictly before the
+run date, every intent fills at that date's close through `PlanExecutor`, and
+the result lands under `runs/backtests/<from>_<to>-<label>/` as `equity.csv`,
+`weekly.csv`, `trades.csv`, `params.json` and `summary.json`. `--set
+lookback_short=21` overrides a `StrategyParams` field for a variant;
+`compare baseline long` prints the summaries side by side. Read the first
+line of every summary before the numbers: the universe is today's
+constituents over the whole range and fills are at the close with fixed
+slippage, so the harness compares variants; it does not predict live returns.
+
 **Tests.** `tests/test_settings.py` covers parsing, ranges and the generated
 `.env.example`. `tests/test_kite_auth.py` covers the login module against a
 fake client. `tests/test_momentum.py` covers the pure helpers: symbol parsing,
@@ -377,7 +392,8 @@ exit reason, and sizing (ADR-021).
 `tests/test_broker.py` covers the Kite adapter's mapping and backoff and the
 paper wrapper; `tests/test_fills.py` the wait for a fill, the booking rules and
 the five places a position follows a fill (ADR-019); `tests/test_candles.py` the cache paths; `tests/test_artifacts.py`
-the run directory; `tests/test_golden.py` is the golden-file regression test
+the run directory; `tests/test_backtest.py` the replay over the golden
+fixtures (ADR-023); `tests/test_golden.py` is the golden-file regression test
 (below); `tests/test_pipeline.py`
 everything above the helpers, including whole `run(ctx)` calls in bull, bear
 and kill-switch markets. To test a strategy function, take the `ctx` fixture

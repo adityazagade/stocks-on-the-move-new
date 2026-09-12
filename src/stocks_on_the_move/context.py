@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 from stocks_on_the_move.artifacts import Artifacts, NoArtifacts
 from stocks_on_the_move.broker import Broker, Side
-from stocks_on_the_move.candles import CandleStore
+from stocks_on_the_move.candles import CandleSource
 from stocks_on_the_move.indicators import Snapshot
 from stocks_on_the_move.params import StrategyParams
 from stocks_on_the_move.settings import Settings
@@ -132,7 +132,7 @@ class RunContext:
 
     settings: Settings
     broker: Broker
-    candles: CandleStore
+    candles: CandleSource
     now: Callable[[], datetime] = ist_now
     paper: bool = False
     portfolio: Portfolio = field(default_factory=Portfolio)

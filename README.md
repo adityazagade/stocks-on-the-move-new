@@ -111,6 +111,7 @@ src/stocks_on_the_move/
   ledger.py       the portfolio snapshot and the two ledgers (ADR-004)
   reporting.py    the artifact tables' columns and row builders
   context.py      RunContext, Portfolio, Fill, the token cache
+  backtest.py     replay the pipeline over years of cached candles; warm / run / compare (ADR-023)
   broker.py       Broker protocol, KiteBroker with backoff, PaperBroker (ADR-008)
   candles.py      per-instrument candle cache with self-correcting fetches (ADR-008)
   artifacts.py    the per-run directory under runs/: tables, run.json, run.log (ADR-006)

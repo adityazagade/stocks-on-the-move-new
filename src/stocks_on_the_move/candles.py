@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -38,6 +39,18 @@ def slice_by_date(df: pd.DataFrame, start_d: date, end_d: date) -> pd.DataFrame:
         return df
     d = pd.to_datetime(df["date"], utc=True).dt.tz_convert("Asia/Kolkata").dt.date
     return df[(d >= start_d) & (d <= end_d)].reset_index(drop=True)
+
+
+class CandleSource(Protocol):
+    """Where the pipeline reads candles: the cache below, or a replay over it (ADR-023)."""
+
+    def get(self, token: int, days: int) -> pd.DataFrame: ...
+
+
+def window(days: int, end_d: date) -> tuple[date, date]:
+    """The calendar window ``get(token, days)`` slices: ``days`` plus a pad, ending on ``end_d``."""
+    extra = max(days // 2, EXTRA_DAYS_PAD)
+    return end_d - timedelta(days=days + extra), end_d
 
 
 class CandleStore:
@@ -76,9 +89,7 @@ class CandleStore:
         return df
 
     def get(self, token: int, days: int) -> pd.DataFrame:
-        end_d = self._today()
-        extra = max(days // 2, EXTRA_DAYS_PAD)
-        start_d = end_d - timedelta(days=days + extra)
+        start_d, end_d = window(days, self._today())
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         cache_file = self._cache_dir / f"{token}.csv"
 
