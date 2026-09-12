@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -24,10 +25,12 @@ EXTRA_DAYS_PAD = 75
 OVERLAP_DAYS_FOR_CHECK = 30
 
 
-def _machine_today() -> date:
-    # The machine's local date, as before. Rough edge 4 (ONBOARDING) is the IST
-    # version of this line; it gets its own one-line ADR, not a side effect here.
-    return datetime.now().date()
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _ist_today() -> date:
+    """The date in IST, the one clock the whole program keeps (ADR-018)."""
+    return datetime.now(IST).date()
 
 
 def slice_by_date(df: pd.DataFrame, start_d: date, end_d: date) -> pd.DataFrame:
@@ -54,7 +57,7 @@ class CandleStore:
         *,
         sleep_sec: float,
         sleep: Callable[[float], None] = time.sleep,
-        today: Callable[[], date] = _machine_today,
+        today: Callable[[], date] = _ist_today,
     ) -> None:
         self._broker = broker
         self._cache_dir = cache_dir

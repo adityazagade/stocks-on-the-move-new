@@ -508,3 +508,76 @@ def test_run_kill_switch_uses_the_kill_mode_directory(make_context):
     meta = json.loads((ctx.artifacts.path / "run.json").read_text())
     assert (meta["status"], meta["positions_before"], meta["positions_after"]) == ("completed", {"AAA": 10}, {})
     assert len(read_table(ctx.artifacts.path / "trades.csv")) == 1
+
+
+# ── ADR-017: a position changes only when a trade was placed ─────────────
+
+
+def test_prune_keeps_a_holding_it_cannot_price(make_context, caplog):
+    broker = FakeBroker()
+    broker.add_equity("KEEP", 1, trending_closes(120, daily=0.002), end=TODAY)
+    ctx = make_context(broker, cut_off_pct=1.0, artifacts=True)
+    m.init_cash_balance(ctx)
+    m.build_token_cache(ctx)
+    ctx.portfolio.positions = {"KEEP": 5, "GHOST": 3}  # GHOST has no price anywhere
+    cash_before = ctx.portfolio.cash
+
+    with caplog.at_level(logging.WARNING, logger=LOG):
+        m.prune_portfolio(ctx, [rank("KEEP", close=120.0, ema100=100.0)])
+
+    assert ctx.portfolio.positions == {"KEEP": 5, "GHOST": 3}
+    assert ctx.portfolio.sold == set()
+    assert broker.orders == [] and ledger_rows(ctx.settings.trades_ledger_file) == []
+    assert ctx.portfolio.cash == cash_before
+    rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "exits.csv")}
+    assert (rows["GHOST"]["decision"], rows["GHOST"]["reasons"], rows["GHOST"]["price"]) == (
+        "SKIP:no_price",
+        "unranked",
+        "",
+    )
+    assert "GHOST: exit wanted (unranked) but no price came back" in caplog.text
+
+
+def test_resize_leaves_the_quantity_when_the_sell_down_has_no_price(make_context):
+    broker = FakeBroker()
+    broker.add_equity("FAT", 1, trending_closes(120, start=100.0), end=TODAY)
+    del broker.ltps["NSE:FAT"]  # candles for sizing, but no last price to sell at
+    ctx = make_context(broker, artifacts=True)
+    m.init_cash_balance(ctx)
+    m.build_token_cache(ctx)
+    ctx.portfolio.positions = {"FAT": 1000}
+
+    m.resize_positions(ctx, bull=False)
+
+    assert ctx.portfolio.positions == {"FAT": 1000}
+    assert broker.orders == []
+    rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "sizing.csv")}
+    assert rows["FAT"]["action"] == "SKIP:not_placed"
+
+
+def test_raise_cash_skips_a_holding_it_cannot_price_and_sells_the_next(ctx):
+    m.init_cash_balance(ctx)
+    ctx.broker.ltps.update({"NSE:BEST": 100.0})  # WORST has no price
+    ctx.portfolio.positions = {"BEST": 10, "WORST": 10}
+    ctx.portfolio.cash = -500.0
+
+    m.raise_cash_if_needed(ctx, [rank("BEST"), rank("WORST")])
+
+    assert ctx.portfolio.positions["WORST"] == 10  # untouched: nothing was sent
+    assert [o.symbol for o in ctx.broker.orders] == ["BEST"]
+    assert ctx.portfolio.positions["BEST"] == 4 and ctx.portfolio.cash > 0
+
+
+def test_kill_switch_reports_what_it_could_not_sell(make_context, caplog):
+    broker = FakeBroker(ltp={"NSE:AAA": 100.0})  # BBB has no price
+    ctx = make_context(broker, kill_switch=True, artifacts=True)
+    m.write_portfolio(ctx.settings.portfolio_file, {"AAA": 10, "BBB": 4})
+
+    with caplog.at_level(logging.WARNING, logger=LOG):
+        m.run(ctx)
+
+    assert broker.orders == [Order("AAA", "SELL", 10, "MARKET")]
+    assert ctx.portfolio.positions == {"BBB": 4}
+    assert m.read_portfolio(ctx.settings.out_file) == {"BBB": 4}
+    assert "could not sell 1 position(s), still held: BBB" in caplog.text
+    assert "1 position(s) remain" in caplog.text

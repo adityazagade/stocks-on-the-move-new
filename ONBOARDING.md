@@ -33,17 +33,17 @@ Where this port deviates from the book, and it matters when you read the code:
   It is a weighted blend of trailing returns, `0.6*R5 + 0.3*R15 + 0.1*R45`,
   multiplied by the R² of a 90-day log-linear fit. The annualised slope is
   computed and logged but does not affect the order.
-- The lookbacks are 5, 15 and 45 trading days. The constants are still named
-  `LOOKBACK_R21`, `LOOKBACK_R63`, `LOOKBACK_R126` and the docstring still
-  says "R21 + R63 + R126": the values were shortened in the last iteration
-  (v3 to v4) and the names were not. Trust the values.
+- The lookbacks are 5, 15 and 45 trading days (`LOOKBACK_SHORT/MID/LONG`,
+  weights `WEIGHT_SHORT/MID/LONG`), shortened from the book's 21/63/126 before
+  version control for a reason nobody recorded. Changing them again is a
+  strategy ADR with the golden test as its evidence (ADR-016).
 - Regime and trend filters use EMAs where the book uses simple moving averages.
 
 ## 2. Your first hour
 
 ```sh
 uv sync                      # Python 3.13 + all deps into .venv
-uv run pytest                # 13 tests, well under a second
+uv run pytest                # the whole suite, a few seconds
 uv run pre-commit install    # hooks: ruff, uv-lock, whitespace
 cp .env.example .env         # add KITE_API_KEY / KITE_API_SECRET
 ```
@@ -117,7 +117,7 @@ A stock is ranked only if it passes all of these, in order:
 
 1. Kite lists it as `instrument_type == "EQ"` in segment `NSE` and its base
    symbol is in the NIFTY 500 list.
-2. Enough daily candles: `max(MA_FILTER_100, LOOKBACK_R126 + 1, REG_LOOKBACK + 1)` rows.
+2. Enough daily candles: `max(MA_FILTER_100, LOOKBACK_LONG + 1, REG_LOOKBACK + 1)` rows.
 3. Last close above the 100-day EMA.
 4. 20-day average volume at least `MIN_VOLUME`.
 5. ATR(20) no more than `MAX_ATR_PCT` of price.
@@ -139,7 +139,10 @@ A holding is sold when any of these hold:
   rolling maximum close.
 
 Sold symbols go into `ctx.portfolio.sold` and are not bought back in the
-same run. If the ranking is empty the prune step is skipped
+same run. A holding that should be sold but cannot be priced (no quote, no
+last price) stays exactly as it was, with a WARNING and a `SKIP:no_price`
+row in `exits.csv`: a position changes only when a trade was placed, in
+every path (ADR-017). If the ranking is empty the prune step is skipped
 entirely, as a guard against liquidating everything on a bad data day.
 
 ### Sizing (steps 9 and 11)
@@ -191,7 +194,8 @@ the best bid or ask from a `quote()` depth call. `series_of` and
 `base_symbol` do the parsing; both are unit tested.
 
 **All scheduling is IST.** Weekday checks and ISO-week parity use
-`ist_now()`. Candle dates are timezone-aware IST.
+`ist_now()`, the candle window ends on the IST date (ADR-018), and candle
+dates are timezone-aware IST.
 
 **Run artifacts are diagnostics, not state.** Every run past the weekday
 guard writes `runs/<date>/<time>-<mode>/` (ADR-006): the universe verdicts,
@@ -341,33 +345,16 @@ ledger rows (fees, starting cash) deserves a note in the commit body.
 
 ## 7. Known rough edges
 
-Things we know about and have not fixed. Good first tasks, in rough order of
-value. Each one needs an ADR before the fix; see `docs/adr/`.
+Things we know about and have not fixed. Each one needs an ADR before the
+fix; see `docs/adr/`. The six items this list carried in September 2026 are
+closed by ADR-005, 006, 008, 015, 016, 017 and 018, which still refer to
+them by their old numbers.
 
-1. **Stale names and docstring for the lookbacks.** See section 1. Renaming
-   the constants to `LOOKBACK_SHORT/MID/LONG` and fixing the
-   `_composite_momentum` docstring is a safe first commit.
-2. **`kite_call` returned `None` after exhausting retries.** Fixed by
-   ADR-008: `KiteBroker.call` raises `BrokerError` carrying the last message.
-3. **Fills are assumed.** Limit orders on `BE`/`BZ` names may not fill, but
-   the ledger and the portfolio snapshot are updated as if they did. In the
-   same family: `prune_portfolio`, `resize_positions`, `raise_cash_if_needed`
-   and `liquidate_all` adjust positions even when `safe_sell` returned `None`
-   because no price was available; `sizing.csv` shows those as
-   `SKIP:not_placed`.
-4. **`CandleStore` uses the machine's local date** (`datetime.now().date()`)
-   for the end of the window while everything else uses IST. Identical on a
-   machine set to IST, off by one day otherwise. ADR-008 made the date
-   injectable (`today=` on `CandleStore`); the fix is a one-line follow-up
-   ADR.
-5. **`authenticate` needed a TTY.** Addressed by ADR-005: the session is
-   cached until 06:00 IST and the login redirect is captured on a local
-   listener, so only the first run of the day needs a person. Unattended
-   scheduling itself is a separate, future ADR.
-6. **Broad `except Exception` in `rank_universe`** used to hide data problems
-   at DEBUG. Addressed by ADR-006 (every swallowed error is an `error:<type>`
-   row in `universe.csv`) and ADR-015 (the log line is a WARNING naming the
-   symbol and the exception type).
+1. **Limit-order fills are assumed.** A LIMIT order on a `BE`/`BZ` name may
+   never fill, but once the broker accepts it the ledger and the portfolio
+   snapshot are updated as if it did. Fixing this needs order-status
+   polling against the broker after the order, and a rule for what to do
+   with a partial fill.
 
 ## 8. Glossary
 

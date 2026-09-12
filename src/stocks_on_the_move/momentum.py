@@ -53,9 +53,15 @@ MIN_SHARES = 1
 # scoring & filters
 MA_PERIOD_200 = 200
 MA_FILTER_100: int = 100
-LOOKBACK_R21 = 5
-LOOKBACK_R63 = 15
-LOOKBACK_R126 = 45
+# Momentum lookbacks in trading days and their weights in the composite score (ADR-016).
+# Shortened from the book's 21/63/126 before version control, for a reason nobody recorded;
+# changing them again is a strategy ADR with the golden test (ADR-009) as its evidence.
+LOOKBACK_SHORT = 5
+LOOKBACK_MID = 15
+LOOKBACK_LONG = 45
+WEIGHT_SHORT = 0.6
+WEIGHT_MID = 0.3
+WEIGHT_LONG = 0.1
 REG_LOOKBACK = 90
 
 TRADING_DAYS_YR = 250
@@ -408,17 +414,20 @@ def annualise(slope_day: float) -> float:
 def _composite_momentum(closes: pd.Series):
     """Return (score, annual_slope, r2) or (nan, nan, nan) if insufficient data.
 
-    score = (R21 + R63 + R126) × R²(90d)
+    score = (0.6·R5 + 0.3·R15 + 0.1·R45) × R²(90d): a weighted sum of the simple
+    returns over LOOKBACK_SHORT, LOOKBACK_MID and LOOKBACK_LONG trading days, scaled
+    by the R² of a log-linear fit over REG_LOOKBACK days. annual_slope is that fit's
+    slope annualised.
     """
-    need = max(LOOKBACK_R126, REG_LOOKBACK) + 1
+    need = max(LOOKBACK_LONG, REG_LOOKBACK) + 1
     if len(closes) < need:
         return math.nan, math.nan, math.nan
 
     last = float(closes.iloc[-1])
-    r21 = (last / float(closes.iloc[-(LOOKBACK_R21 + 1)])) - 1.0
-    r63 = (last / float(closes.iloc[-(LOOKBACK_R63 + 1)])) - 1.0
-    r126 = (last / float(closes.iloc[-(LOOKBACK_R126 + 1)])) - 1.0
-    comp = 0.6 * r21 + 0.3 * r63 + 0.1 * r126
+    r_short = (last / float(closes.iloc[-(LOOKBACK_SHORT + 1)])) - 1.0
+    r_mid = (last / float(closes.iloc[-(LOOKBACK_MID + 1)])) - 1.0
+    r_long = (last / float(closes.iloc[-(LOOKBACK_LONG + 1)])) - 1.0
+    comp = WEIGHT_SHORT * r_short + WEIGHT_MID * r_mid + WEIGHT_LONG * r_long
 
     y = np.log(closes.iloc[-REG_LOOKBACK:])
     x = np.arange(len(y), dtype=float)
@@ -431,7 +440,7 @@ def _composite_momentum(closes: pd.Series):
     return comp * r2, annualise(float(slope)), float(r2)
 
 
-MIN_HISTORY = max(MA_FILTER_100, LOOKBACK_R126 + 1, REG_LOOKBACK + 1)
+MIN_HISTORY = max(MA_FILTER_100, LOOKBACK_LONG + 1, REG_LOOKBACK + 1)
 
 
 @dataclass(frozen=True)
@@ -624,7 +633,7 @@ def _trailing_stop(ctx: RunContext, sym: str) -> tuple[bool, float | None]:
     """(hit, stop level) for the n×ATR trailing stop under the rolling high close."""
     s = ctx.settings
     tok = token_of(ctx, sym, "NSE")
-    look = max(s.atr_period, LOOKBACK_R126)
+    look = max(s.atr_period, LOOKBACK_LONG)
     df = ctx.candles.get(tok, look)
     if len(df) < s.atr_period + 1:
         logger.warning("Not enough candles for trailing stop")
@@ -702,10 +711,18 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
         pct = (idx[sym] + 1) / total if sym in idx else 1.0
         check = exit_reasons(ctx, rank, pct)
         price = None
+        decision = "HOLD"
         if check.sell:
             price = safe_sell(ctx, sym, qty)
-            pf.positions.pop(sym)
-            pf.sold.add(sym)
+            if price is None:  # nothing was sent, so nothing changes (ADR-017)
+                logger.warning(
+                    "%s: exit wanted (%s) but no price came back; the holding stays", sym, ";".join(check.reasons)
+                )
+                decision = "SKIP:no_price"
+            else:
+                pf.positions.pop(sym)
+                pf.sold.add(sym)
+                decision = "SELL"
         rows.append(
             {
                 "symbol": sym,
@@ -716,7 +733,7 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
                 "ema100": rank.ema100 if rank else None,
                 "stop_level": check.stop_level,
                 "reasons": ";".join(check.reasons),
-                "decision": "SELL" if check.sell else "HOLD",
+                "decision": decision,
                 "price": price,
             }
         )
@@ -772,8 +789,9 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
 
     # 1️⃣ sell downs first
     for sym, delta in to_down.items():
-        if safe_sell(ctx, sym, delta) is None:
+        if safe_sell(ctx, sym, delta) is None:  # nothing was sent, so the quantity stays (ADR-017)
             rows[sym]["action"] = "SKIP:not_placed"
+            continue
         pf.positions[sym] -= delta
         if pf.positions[sym] == 0:
             pf.positions.pop(sym)
@@ -833,10 +851,15 @@ def liquidate_all(ctx: RunContext) -> None:
     """KILL SWITCH: sell every position in the portfolio."""
     pf = ctx.portfolio
     logger.warning("KILL SWITCH activated – liquidating all %d positions", len(pf.positions))
+    unsold: list[str] = []
     for sym, qty in list(pf.positions.items()):
-        safe_sell(ctx, sym, qty)
+        if safe_sell(ctx, sym, qty) is None:  # nothing was sent, so the holding stays (ADR-017)
+            unsold.append(sym)
+            continue
         pf.positions.pop(sym)
-    logger.warning("KILL SWITCH complete – portfolio empty, cash: %.2f", pf.cash)
+    if unsold:
+        logger.warning("KILL SWITCH could not sell %d position(s), still held: %s", len(unsold), ", ".join(unsold))
+    logger.warning("KILL SWITCH complete – %d position(s) remain, cash: %.2f", len(pf.positions), pf.cash)
 
 
 def raise_cash_if_needed(ctx: RunContext, ranks: list[RankItem]) -> None:
@@ -865,7 +888,8 @@ def raise_cash_if_needed(ctx: RunContext, ranks: list[RankItem]) -> None:
         sell_qty = min(qty, int(math.ceil(need / per_share)))
         if sell_qty <= 0:
             continue
-        safe_sell(ctx, sym, sell_qty)
+        if safe_sell(ctx, sym, sell_qty) is None:  # nothing was sent, so the holding stays (ADR-017)
+            continue
         pf.positions[sym] -= sell_qty
         if pf.positions[sym] == 0:
             pf.positions.pop(sym)
@@ -1083,7 +1107,9 @@ def main() -> None:
         ctx = RunContext(
             settings=settings,
             broker=broker,
-            candles=CandleStore(broker, settings.cache_dir, sleep_sec=settings.candle_sleep_sec),
+            candles=CandleStore(
+                broker, settings.cache_dir, sleep_sec=settings.candle_sleep_sec, today=lambda: ist_now().date()
+            ),
             now=ist_now,
             paper=paper,
             artifacts=artifacts,
