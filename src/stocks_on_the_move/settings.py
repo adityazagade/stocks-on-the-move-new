@@ -19,7 +19,7 @@ import sys
 import textwrap
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import annotated_types
 from pydantic import Field, SecretStr, ValidationError, field_validator
@@ -118,6 +118,12 @@ class Settings(BaseSettings):
     kite_max_retries: int = Field(6, ge=1, description="Attempts per Kite call while it answers 'too many requests'.")
     candle_sleep_sec: float = Field(0.15, ge=0, description="Pause after each historical-data download.")
 
+    # ── Logging (ADR-015) ────────────────────────────────────────────────
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        "INFO",
+        description="Console log level. The run's log file under RUNS_DIR always gets DEBUG.",
+    )
+
     # ── Files ────────────────────────────────────────────────────────────
     portfolio_file: str = Field("current_portfolio.csv", description="Positions going into the run: SYMBOL,QUANTITY.")
     out_file: str = Field("next_portfolio.csv", description="Positions after the run.")
@@ -134,6 +140,11 @@ class Settings(BaseSettings):
     def _strip_strings(cls, value: Any) -> Any:
         """A stray space in the environment must not turn a value into junk or, worse, into 'true'."""
         return value.strip() if isinstance(value, str) else value
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _upper_level(cls, value: Any) -> Any:
+        return value.upper() if isinstance(value, str) else value
 
     @field_validator("kite_session_file", "cache_dir", "runs_dir")
     @classmethod
@@ -216,6 +227,7 @@ EXAMPLE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Cash flow for this run", ("env_cashflow", "cashflow_note")),
     ("Friction", ("fees_pct", "slippage_pct")),
     ("Kite rate limiting", ("kite_rps", "kite_max_retries", "candle_sleep_sec")),
+    ("Logging", ("log_level",)),
     ("Files", ("portfolio_file", "out_file", "cash_ledger_file", "trades_ledger_file", "cache_dir", "runs_dir")),
 )
 

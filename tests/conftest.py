@@ -17,6 +17,7 @@ import pytest
 from fakes import EVEN_WEEK_WEDNESDAY, FakeBroker
 from stocks_on_the_move import momentum as m
 from stocks_on_the_move.artifacts import RunArtifacts
+from stocks_on_the_move.broker import Broker
 from stocks_on_the_move.candles import CandleStore
 from stocks_on_the_move.settings import Settings
 
@@ -75,7 +76,7 @@ def make_context(make_settings) -> Callable[..., m.RunContext]:
     """
 
     def make(
-        broker: FakeBroker | None = None,
+        broker: Broker | None = None,
         *,
         now: Callable[[], datetime] | None = None,
         artifacts: bool = False,

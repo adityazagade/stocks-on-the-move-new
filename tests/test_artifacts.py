@@ -118,7 +118,7 @@ def test_attach_log_copies_lines_until_finish(tmp_path):
     target.info("after finish")
 
     text = (run.path / "run.log").read_text()
-    assert "INFO     ranked 42 symbols" in text
+    assert "INFO     sotm.test.artifacts test_artifacts:" in text and "ranked 42 symbols" in text
     assert "after finish" not in text
     assert target.handlers == []
 

@@ -147,4 +147,44 @@ reads out of import time; logging configuration should move with them.
 
 ## Implementation Status
 
-Not started.
+Code complete on 2026-09-12; awaiting plan step 3 by the owner.
+
+- **Configured at entry.** `logging_setup.configure_logging(level)` sets the
+  `stocks_on_the_move` logger to DEBUG and installs one console handler at
+  `LOG_LEVEL` on it; `main()` calls it with `INFO` before the settings load,
+  so a configuration error is still printed, and again with `LOG_LEVEL`
+  once the settings exist. `logging.basicConfig` is gone. The root logger
+  is untouched, so third-party warnings surface through Python's
+  last-resort handler and nothing else reaches the run's file.
+- **`LOG_LEVEL`** is a field on `Settings` (ADR-007), one of the five
+  standard names, case-insensitive on input; `.env.example` regenerated.
+- **The file.** ADR-006 landed first, so `run.log` in the run directory is
+  the destination from day one and `LOG_DIR` was never created (see Notes).
+  `RunArtifacts.attach_log` now attaches `logging_setup.file_handler`, DEBUG,
+  in the file format with logger name and source line, to the package
+  logger; `main()` attaches it right after the weekday guard, before the
+  login. `finish()` detaches it.
+- **Level policy applied.** The `except Exception` in the ranking filter
+  chain logs a WARNING with the symbol and the exception type and message;
+  both `size calc error` handlers likewise; each rate-limit backoff in
+  `KiteBroker.call` logs a WARNING with the attempt number. "Size rebalance
+  skipped (odd week)" moved from DEBUG to INFO because it is a decision.
+  Nothing logs a token, a secret or a Kite response body; the tests assert
+  the two test credentials appear in neither console nor file.
+- **Tests** (`tests/test_logging.py`): idempotent configuration and an
+  untouched root; `LOG_LEVEL` validation; the three WARNING promotions; and
+  the local form of plan step 3: a whole paper run with `LOG_LEVEL=WARNING`
+  writes no INFO or DEBUG to the console while `run.log` holds INFO and
+  DEBUG lines in the file format, with no credential in either.
+- **Plan step 3** proper, a real paper run with `LOG_LEVEL=WARNING`, is the
+  owner's; the same run also serves ADR-006, 007, 008 and 009. Status moves
+  to Implemented after that.
+
+## Notes
+
+`LOG_DIR` and the `logs/` directory in the Decision were the interim for a
+world where this ADR preceded ADR-006. It did not, so neither exists and
+`.gitignore` gains nothing; `runs/` already covers the file.
+
+The onboarding guide's tooling section explains the two handler levels, and
+rough edge 6 now credits both ADR-006 and this one.

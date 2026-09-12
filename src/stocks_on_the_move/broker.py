@@ -160,7 +160,9 @@ class KiteBroker:
                 if not _is_rate_limit(exc):
                     raise
                 last = exc
-                logger.debug("Kite rate limited on attempt %d/%d; backing off %.2fs", attempt, self._max_retries, delay)
+                logger.warning(
+                    "Kite rate limited on attempt %d/%d; backing off %.2fs", attempt, self._max_retries, delay
+                )
                 self._sleep(delay + self._uniform(0, delay * 0.3))
                 delay = min(delay * 2, 8.0)
         raise BrokerError(
