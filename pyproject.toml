@@ -25,6 +25,8 @@ dev = [
     "pre-commit>=4.0",
     "pytest>=8.0",
     "ruff>=0.9",
+    "ty==0.0.80",
+    "uv>=0.12.9,<0.13",
 ]
 
 [build-system]
@@ -49,6 +51,15 @@ select = [
     "C4",  # flake8-comprehensions
     "SIM", # flake8-simplify
 ]
+
+# ty (ADR-010): pinned exactly in the dev group above and in .pre-commit-config.yaml;
+# the two versions move together. `uv run ty check` is the developer command.
+[tool.ty.src]
+include = ["src", "tests"]
+exclude = ["archive"]  # earlier script iterations, kept verbatim; never checked (same as ruff)
+
+[tool.ty.environment]
+python-version = "3.12"  # the lowest version requires-python promises
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

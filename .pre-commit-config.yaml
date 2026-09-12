@@ -6,6 +6,12 @@ repos:
         args: [--fix]
       - id: ruff-format
 
+  # Type checking (ADR-010). The rev is ty's version and must match the dev-group pin.
+  - repo: https://github.com/astral-sh/ty-pre-commit
+    rev: v0.0.80
+    hooks:
+      - id: ty
+
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: 0.12.13
     hooks:

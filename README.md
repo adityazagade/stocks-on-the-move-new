@@ -71,6 +71,7 @@ Useful switches (the full list, with defaults, is in `.env.example`):
 uv run pytest                 # unit tests, including whole runs against a fake broker
 uv run ruff check --fix .     # lint: pyflakes, isort, pyupgrade, bugbear, ...
 uv run ruff format .          # format
+uv run ty check               # type-check src/ and tests/ (ADR-010)
 uv run pre-commit install     # run the above automatically on every commit
 uv run python -m stocks_on_the_move.settings --check    # the configuration a run would see
 uv run python -m stocks_on_the_move.settings --example > .env.example   # after adding a setting

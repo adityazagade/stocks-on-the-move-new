@@ -145,4 +145,49 @@ and one line.
 
 ## Implementation Status
 
-Not started.
+Code complete on 2026-09-12; awaiting the CI half of plan step 3.
+
+- **Step 1, the trial.** ty 0.0.80 on `src/` and `tests/` after ADR-008:
+  17 diagnostics, all real: 14 `invalid-argument-type`, 1
+  `invalid-method-override`, 1 `invalid-assignment`, 1 `unresolved-attribute`.
+  With `pandas-stubs` 2.3.3 installed in a scratch environment: 19, the same
+  17 plus two false positives (`np.isclose` overload, `.date()` on a wide
+  union) and no `Unknown` removed. `pandas-stubs` is not adopted.
+- **Step 2, adopt.** `ty==0.0.80` in the dev group; `[tool.ty]` in
+  `pyproject.toml` (`src.include = ["src", "tests"]`, `src.exclude =
+  ["archive"]`, `environment.python-version = "3.12"`);
+  `astral-sh/ty-pre-commit` at `v0.0.80` in `.pre-commit-config.yaml`, so
+  CI (ADR-011) runs it by construction. Every diagnostic fixed: keyword
+  unpacking of a metrics dict into a dataclass replaced by a closure with
+  typed locals; `Side` literals on the order helpers; the
+  `BaseHTTPRequestHandler.log_message` override keeps the base parameter
+  name; the bind address is unpacked with explicit `str`/`int`; the
+  redirect wait loop narrows `listener` instead of a `type: ignore`; the
+  test helper for `AuthSettings` takes explicit keywords; the fake-client
+  factory parameter is `Callable[..., Any]`. One suppression remains, in the
+  test that deliberately passes an invalid side to `Order`, on one line,
+  naming the rule, with its reason. `# type: ignore` comments are gone.
+- **Step 3, half done.** Locally, a scratch module with a deliberate type
+  error makes the `ty` hook fail with `invalid-assignment` and exit 1. The
+  CI half happens with the pull request that carries this ADR: a scratch
+  branch with the same error under a draft pull request must go red on the
+  `pre-commit hooks` job; the branch is deleted afterwards. Status moves to
+  Implemented after that.
+
+## Notes
+
+- **ty 0.0.80 delegates `ty check` to `uv check`.** The `ty` wheel's binary
+  looks for a `uv` executable next to itself and fails without one; the
+  official hook is literally `uv check --preview-features=check-command
+  --ty-version=0.0.80` (its environment pins `uv==0.12.12`). So that
+  `uv run ty check` works from the project environment, `uv` joins the dev
+  group as `uv>=0.12.9,<0.13`, bounded at the next minor because uv is
+  pre-1.0 and its minors carry breaking changes. The alternative, telling
+  developers to type the `uv check --preview-features...` incantation, was
+  rejected as a documentation burden for the same result.
+- `[tool.ty.environment].python-version` would be inferred from
+  `requires-python` anyway; it is written down so the target is visible next
+  to the rules.
+- The ADR's Context lists pyright 1.1.414 and mypy 2.3.1 as of 2026-09-12;
+  those numbers were not re-checked at implementation time. ty's was:
+  0.0.80 is still the latest release (2026-09-09).
