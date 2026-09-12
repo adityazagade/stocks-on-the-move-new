@@ -35,7 +35,7 @@ import time
 from collections import namedtuple
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta
-from pathlib import Path
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -44,25 +44,12 @@ from kiteconnect import KiteConnect
 from kiteconnect.exceptions import NetworkException
 
 from stocks_on_the_move import kite_auth
+from stocks_on_the_move.settings import Settings, SettingsError
 
-# ── configuration ────────────────────────────────────────────────────────
-API_KEY = os.getenv("KITE_API_KEY", "YOUR_API_KEY")
-API_SECRET = os.getenv("KITE_API_SECRET", "YOUR_API_SECRET")
-# Session cache and login capture (ADR-005): KITE_SESSION_FILE, KITE_REDIRECT_PORT,
-# KITE_OPEN_BROWSER and KITE_FORGET_SESSION are read in kite_auth.py.
-
-INDEX_SYM = os.getenv("INDEX_SYMBOL", "NIFTY 50")
-INDEX_EXCH = os.getenv("INDEX_EXCHANGE", "NSE")
-
-# Legacy default; now only used as fallback for STARTING_CASH default:
-ACCOUNT_VALUE = float(os.getenv("ACCOUNT_VALUE", 1_00_000))
-
-RISK_FACTOR = float(os.getenv("RISK_FACTOR", 0.001))  # 0.1 % per ATR
-ATR_PERIOD = int(os.getenv("ATR_PERIOD", 20))
+# ── strategy constants ───────────────────────────────────────────────────
+# Fixed by the strategy, not configurable. Every environment knob is a field of
+# settings.Settings (ADR-007) and is read through SETTINGS, installed by main().
 MIN_SHARES = 1
-
-# new sizing guard
-MAX_WEIGHT = float(os.getenv("MAX_WEIGHT", 0.10))  # 10 % cap
 
 # scoring & filters
 MA_PERIOD_200 = 200
@@ -70,17 +57,10 @@ MA_FILTER_100: int = 100
 LOOKBACK_R21 = 5
 LOOKBACK_R63 = 15
 LOOKBACK_R126 = 45
-look_backs = [LOOKBACK_R21, LOOKBACK_R63, LOOKBACK_R126]
 REG_LOOKBACK = 90
-MIN_VOLUME = int(os.getenv("MIN_VOLUME", 10_000))
-MAX_ATR_PCT = float(os.getenv("MAX_ATR_PCT", 0.10))  # 10 % of price
-EXIT_MULTIPLE = float(os.getenv("EXIT_MULTIPLE", 5.0))  # 5×ATR stop
 
 EXTRA_DAYS_PAD = 75
 TRADING_DAYS_YR = 250
-MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", 25))
-TRADING_WEEKDAY = int(os.getenv("TRADING_WEEKDAY", 2))  # 0=Mon (Wed=2)
-CUT_OFF_PCT = float(os.getenv("CUT_OFF_PCT", 0.20))
 
 # recognised NSE equity series codes
 SERIES_CODES: set[str] = {
@@ -105,34 +85,8 @@ SERIES_CODES: set[str] = {
 }
 NO_MARKET_SERIES = {"BE", "BZ", "BT", "IL", "IQ", "SM", "ST"}
 
-PORTFOLIO_FILE = os.getenv("PORTFOLIO_FILE", "current_portfolio.csv")
-OUT_FILE = os.getenv("OUT_FILE", "next_portfolio.csv")
-
-# NEW: cash/trades ledgers & cashflow env toggles
-STARTING_CASH = float(os.getenv("STARTING_CASH", ACCOUNT_VALUE))
-CASH_LEDGER_FILE = os.getenv("CASH_LEDGER_FILE", "cash_ledger.csv")
-TRADES_LEDGER_FILE = os.getenv("TRADES_LEDGER_FILE", "trades_ledger.csv")
-ENV_CASHFLOW = float(os.getenv("ENV_CASHFLOW", 0.0))  # +ve deposit today; -ve withdrawal
-CASHFLOW_NOTE = os.getenv("CASHFLOW_NOTE", "env-cashflow")
-
-# rough all-in fees (+ STT, exchange, GST…) and a small slippage budget
-FEES_PCT = float(os.getenv("FEES_PCT", 0.0015))  # 0.15%
-SLIPPAGE_PCT = float(os.getenv("SLIPPAGE_PCT", 0.0005))  # 0.05%
-
-# Throttle + backoff for Kite REST calls
-KITE_RPS = float(os.getenv("KITE_RPS", 2.0))  # conservative ceiling
-KITE_MAX_RETRIES = int(os.getenv("KITE_MAX_RETRIES", 6))
-_MIN_INTERVAL = 1.0 / max(KITE_RPS, 0.1)
+# Throttle state for kite_call
 _last_call_ts = 0.0
-
-# Candles cache (CSV, no extra deps)
-CACHE_DIR = Path(os.getenv("CACHE_DIR", ".cache_candles"))
-CACHE_DIR.mkdir(exist_ok=True)
-CANDLE_SLEEP_SEC = float(os.getenv("CANDLE_SLEEP_SEC", 0.15))
-
-FORCE_RESIZE = bool(int(os.getenv("FORCE_RESIZE", "0")))  # expects "0" or "1"
-USE_FULL_NIFTY_UNIVERSE = bool(int(os.getenv("USE_FULL_NIFTY_UNIVERSE", "0")))  # expects "0" or "1"
-KILL_SWITCH = bool(int(os.getenv("KILL_SWITCH", "0")))  # expects "0" or "1"; sells everything
 
 # Timezone: run scheduling and biweekly parity in IST
 IST = ZoneInfo("Asia/Kolkata")
@@ -143,13 +97,27 @@ def ist_now() -> datetime:
     return datetime.now(IST)
 
 
-# ── logging init ─────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
+
+
+# ── configuration handle (ADR-007) ───────────────────────────────────────
+class _Unconfigured:
+    """Placeholder until main() installs the real Settings; any read is a clear error."""
+
+    def __getattr__(self, name: str) -> Any:
+        raise RuntimeError("settings not loaded: call configure(Settings.from_env()) first; main() does this")
+
+
+# Until ADR-008 threads a context object through the pipeline, functions read
+# this module-level handle. Import never touches the environment.
+SETTINGS: Settings = cast(Settings, _Unconfigured())
+
+
+def configure(settings: Settings) -> None:
+    """Install the run's configuration. main() calls it; tests call it with explicit values."""
+    global SETTINGS
+    SETTINGS = settings
+
 
 # ── data structures ──────────────────────────────────────────────────────
 RankItem = namedtuple(
@@ -165,7 +133,6 @@ RankItem = namedtuple(
 )
 
 sold_symbols: set[str] = set()
-allow_kite_execution = os.getenv("ALLOW_KITE_EXECUTION", "1").lower() not in ("0", "false", "no", "n", "off")
 
 # Universe set (filled at runtime inside main; empty at import to avoid net fetch)
 NIFTY500_SET: set[str] = set()
@@ -184,15 +151,15 @@ CASH_BAL: float = 0.0
 def _throttle() -> None:
     global _last_call_ts
     now = time.monotonic()
-    wait = _MIN_INTERVAL - (now - _last_call_ts)
+    wait = SETTINGS.kite_min_interval - (now - _last_call_ts)
     if wait > 0:
-        time.sleep(wait + random.uniform(0, _MIN_INTERVAL * 0.25))
+        time.sleep(wait + random.uniform(0, SETTINGS.kite_min_interval * 0.25))
     _last_call_ts = time.monotonic()
 
 
 def kite_call(fn, *args, **kwargs):
     delay = 0.25
-    for _ in range(KITE_MAX_RETRIES):
+    for _ in range(SETTINGS.kite_max_retries):
         _throttle()
         try:
             return fn(*args, **kwargs)
@@ -243,19 +210,22 @@ def _append_row(path: str, row: list[str | float | int]) -> None:
 
 def append_env_cashflow_if_any() -> None:
     """If ENV_CASHFLOW!=0, append a dated row to cash ledger for today."""
-    if abs(ENV_CASHFLOW) < 1e-9:
+    if abs(SETTINGS.env_cashflow) < 1e-9:
         return
-    _ensure_csv(CASH_LEDGER_FILE, ["date", "amount", "note"])
-    _append_row(CASH_LEDGER_FILE, [ist_now().date().isoformat(), f"{ENV_CASHFLOW:.2f}", CASHFLOW_NOTE])
-    logger.info("Applied ENV_CASHFLOW: %+,.2f (%s)", ENV_CASHFLOW, CASHFLOW_NOTE)
+    _ensure_csv(SETTINGS.cash_ledger_file, ["date", "amount", "note"])
+    _append_row(
+        SETTINGS.cash_ledger_file,
+        [ist_now().date().isoformat(), f"{SETTINGS.env_cashflow:.2f}", SETTINGS.cashflow_note],
+    )
+    logger.info("Applied ENV_CASHFLOW: %+,.2f (%s)", SETTINGS.env_cashflow, SETTINGS.cashflow_note)
 
 
 def cash_from_cash_ledger() -> float:
     """Sum deposits/withdrawals from cash ledger."""
-    if not os.path.isfile(CASH_LEDGER_FILE):
+    if not os.path.isfile(SETTINGS.cash_ledger_file):
         return 0.0
     total = 0.0
-    with open(CASH_LEDGER_FILE, newline="") as f:
+    with open(SETTINGS.cash_ledger_file, newline="") as f:
         rdr = csv.DictReader(f)
         for row in rdr:
             try:
@@ -268,10 +238,10 @@ def cash_from_cash_ledger() -> float:
 
 def trades_cash_delta() -> float:
     """Sum cash impact from the trades ledger (already net of fees/slippage)."""
-    if not os.path.isfile(TRADES_LEDGER_FILE):
+    if not os.path.isfile(SETTINGS.trades_ledger_file):
         return 0.0
     total = 0.0
-    with open(TRADES_LEDGER_FILE, newline="") as f:
+    with open(SETTINGS.trades_ledger_file, newline="") as f:
         rdr = csv.DictReader(f)
         for row in rdr:
             try:
@@ -284,15 +254,16 @@ def trades_cash_delta() -> float:
 def init_cash_balance() -> float:
     """Compute starting CASH_BAL for this run and set global."""
     global CASH_BAL
-    _ensure_csv(CASH_LEDGER_FILE, ["date", "amount", "note"])
+    _ensure_csv(SETTINGS.cash_ledger_file, ["date", "amount", "note"])
     _ensure_csv(
-        TRADES_LEDGER_FILE, ["timestamp", "side", "symbol", "qty", "price", "fees_pct", "slippage_pct", "cash_delta"]
+        SETTINGS.trades_ledger_file,
+        ["timestamp", "side", "symbol", "qty", "price", "fees_pct", "slippage_pct", "cash_delta"],
     )
     append_env_cashflow_if_any()
-    CASH_BAL = STARTING_CASH + cash_from_cash_ledger() + trades_cash_delta()
+    CASH_BAL = SETTINGS.starting_cash + cash_from_cash_ledger() + trades_cash_delta()
     logger.info(
         "Cash reconstructed: START=%.2f, ledger=%.2f, trades=%.2f → CASH=%.2f",
-        STARTING_CASH,
+        SETTINGS.starting_cash,
         cash_from_cash_ledger(),
         trades_cash_delta(),
         CASH_BAL,
@@ -310,21 +281,21 @@ def record_trade(side: str, symbol: str, qty: int, price: float) -> float:
         return 0.0
     # Approximate all-in price impact
     if side.upper() == "BUY":
-        cash_delta = -qty * price * (1.0 + FEES_PCT + SLIPPAGE_PCT)
+        cash_delta = -qty * price * (1.0 + SETTINGS.fees_pct + SETTINGS.slippage_pct)
     elif side.upper() == "SELL":
-        cash_delta = +qty * price * (1.0 - FEES_PCT - SLIPPAGE_PCT)
+        cash_delta = +qty * price * (1.0 - SETTINGS.fees_pct - SETTINGS.slippage_pct)
     else:
         raise ValueError("side must be BUY or SELL")
     _append_row(
-        TRADES_LEDGER_FILE,
+        SETTINGS.trades_ledger_file,
         [
             ist_now().isoformat(timespec="seconds"),
             side.upper(),
             symbol.upper(),
             qty,
             f"{price:.4f}",
-            f"{FEES_PCT:.6f}",
-            f"{SLIPPAGE_PCT:.6f}",
+            f"{SETTINGS.fees_pct:.6f}",
+            f"{SETTINGS.slippage_pct:.6f}",
             f"{cash_delta:.2f}",
         ],
     )
@@ -372,7 +343,18 @@ def fetch_nifty_constituents(retries: int = 3) -> list[str]:
 # ═════════════════════════════════════════════════════════════════════════
 def authenticate() -> KiteConnect:
     """A Kite session: cached from earlier today, captured from the login redirect, or pasted (ADR-005)."""
-    return kite_auth.authenticate(API_KEY, API_SECRET, call=kite_call)
+    auth = kite_auth.AuthSettings(
+        session_file=SETTINGS.kite_session_file,
+        redirect_port=SETTINGS.kite_redirect_port,
+        open_browser=SETTINGS.kite_open_browser,
+        forget_session=SETTINGS.kite_forget_session,
+    )
+    return kite_auth.authenticate(
+        SETTINGS.kite_api_key.get_secret_value(),
+        SETTINGS.kite_api_secret.get_secret_value(),
+        settings=auth,
+        call=kite_call,
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -438,7 +420,8 @@ def candles_df(k: KiteConnect, token: int, days: int) -> pd.DataFrame:
     end_d: date = datetime.now().date()
     extra = max(days // 2, EXTRA_DAYS_PAD)
     start_d: date = end_d - timedelta(days=days + extra)
-    cache_file = CACHE_DIR / f"{token}.csv"
+    SETTINGS.cache_dir.mkdir(parents=True, exist_ok=True)  # first use, not import (ADR-007)
+    cache_file = SETTINGS.cache_dir / f"{token}.csv"
     OVERLAP_DAYS_FOR_CHECK = 30
 
     # --- Path 1: No cache exists ---
@@ -449,7 +432,7 @@ def candles_df(k: KiteConnect, token: int, days: int) -> pd.DataFrame:
         if not df.empty:
             df["date"] = pd.to_datetime(df["date"])
             df.to_csv(cache_file, index=False)
-        time.sleep(CANDLE_SLEEP_SEC)
+        time.sleep(SETTINGS.candle_sleep_sec)
         return df
 
     # --- Path 2: Cache exists, load and process ---
@@ -511,13 +494,15 @@ def candles_df(k: KiteConnect, token: int, days: int) -> pd.DataFrame:
         .reset_index(drop=True)
     )
     df_updated.to_csv(cache_file, index=False)
-    time.sleep(CANDLE_SLEEP_SEC)
+    time.sleep(SETTINGS.candle_sleep_sec)
 
     return _slice_by_date(df_updated, start_d, end_d)
 
 
-def atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> float:
-    """Average True Range over *period* (simple mean), guarded for tiny frames."""
+def atr(df: pd.DataFrame, period: int | None = None) -> float:
+    """Average True Range over *period* (default ATR_PERIOD; simple mean), guarded for tiny frames."""
+    if period is None:
+        period = SETTINGS.atr_period
     if df.empty:
         return float("nan")
     h, lo, c = df["high"], df["low"], df["close"]
@@ -560,8 +545,10 @@ def build_token_cache(k: KiteConnect) -> None:
             TOKEN_CACHE[f"NSE:{ts}"] = tok
 
 
-def token_of(k: KiteConnect, sym: str = INDEX_SYM, exch: str = INDEX_EXCH) -> int:
-    """Resolve instrument_token for EXCH:SYMBOL using local cache; no quote()."""
+def token_of(k: KiteConnect, sym: str | None = None, exch: str | None = None) -> int:
+    """Resolve instrument_token for EXCH:SYMBOL (default: the regime index) using local cache; no quote()."""
+    sym = SETTINGS.index_symbol if sym is None else sym
+    exch = SETTINGS.index_exchange if exch is None else exch
     key = f"{exch}:{sym}"
     if key in TOKEN_CACHE:
         return TOKEN_CACHE[key]
@@ -642,11 +629,11 @@ def rank_universe(k: KiteConnect, universe: Iterable[dict]) -> list[RankItem]:
             # if last <= float(closes.iloc[-(LOOKBACK_R126 + 1)]):
             #     continue
 
-            if float(vols.iloc[-20:].mean()) < MIN_VOLUME:
+            if float(vols.iloc[-20:].mean()) < SETTINGS.min_volume:
                 continue
 
             _atr = atr(df)
-            if math.isnan(_atr) or (last > 0 and _atr / last > MAX_ATR_PCT):
+            if math.isnan(_atr) or (last > 0 and _atr / last > SETTINGS.max_atr_pct):
                 continue
 
             score, ann_slope, r2 = _composite_momentum(closes)
@@ -668,25 +655,25 @@ def target_shares(k: KiteConnect, sym: str, account_equity: float) -> int:
     Size = (account_equity × RISK_FACTOR) / ATR, capped at MAX_WEIGHT notional.
     """
     tok = token_of(k, sym, "NSE")
-    df = candles_df(k, tok, ATR_PERIOD)
-    if len(df) <= ATR_PERIOD:
+    df = candles_df(k, tok, SETTINGS.atr_period)
+    if len(df) <= SETTINGS.atr_period:
         raise ValueError("Not enough candles for ATR")
     atr_value = atr(df)
     if not atr_value or atr_value <= 0:
         raise ValueError("ATR zero")
-    shares = (account_equity * RISK_FACTOR) / atr_value
+    shares = (account_equity * SETTINGS.risk_factor) / atr_value
     price = float(df["close"].iloc[-1])
-    cap = (account_equity * MAX_WEIGHT) / price if price > 0 else 0
+    cap = (account_equity * SETTINGS.max_weight) / price if price > 0 else 0
     return max(math.floor(min(shares, cap)), 0)
 
 
 # Helpers for cash-aware costing
 def gross_cost_for_buy(price: float, qty: int) -> float:
-    return qty * price * (1.0 + FEES_PCT + SLIPPAGE_PCT)
+    return qty * price * (1.0 + SETTINGS.fees_pct + SETTINGS.slippage_pct)
 
 
 def net_proceeds_for_sell(price: float, qty: int) -> float:
-    return qty * price * (1.0 - FEES_PCT - SLIPPAGE_PCT)
+    return qty * price * (1.0 - SETTINGS.fees_pct - SETTINGS.slippage_pct)
 
 
 # ── 4 ▸ order wrappers (cash-aware, rate‑limit safe) ─────────────────────
@@ -706,7 +693,7 @@ def safe_buy(k: KiteConnect, sym: str, qty: int) -> float | None:
         price_used = ltp_map(k, [sym]).get(sym, 0.0)
 
     # Paper mode path first
-    if not allow_kite_execution:
+    if not SETTINGS.allow_kite_execution:
         need = gross_cost_for_buy(price_used, qty)
         if need > CASH_BAL + 1e-6:
             logger.info("Not enough cash for BUY %s x%d (need %.2f, have %.2f)", sym, qty, need, CASH_BAL)
@@ -772,7 +759,7 @@ def safe_sell(k: KiteConnect, sym: str, qty: int) -> float | None:
     srs = series_of(sym)
     key = f"NSE:{sym}"
 
-    if not allow_kite_execution:  # paper mode
+    if not SETTINGS.allow_kite_execution:  # paper mode
         price_used = ltp_map(k, [sym]).get(sym, 0.0)
         record_trade("SELL", sym, qty, price_used)
         logger.info("PAPER SELL %-9s x%4d @ %.2f   (cash → %.2f)", sym, qty, price_used, CASH_BAL)
@@ -815,24 +802,24 @@ def safe_sell(k: KiteConnect, sym: str, qty: int) -> float | None:
 def _trailing_stop_hit(k: KiteConnect, sym: str) -> bool:
     """n×ATR trailing stop using rolling highs."""
     tok = token_of(k, sym, "NSE")
-    look = max(ATR_PERIOD, max(look_backs))
+    look = max(SETTINGS.atr_period, LOOKBACK_R126)
     df = candles_df(k, tok, look)
-    if len(df) < ATR_PERIOD + 1:
+    if len(df) < SETTINGS.atr_period + 1:
         logger.warning("Not enough candles for trailing stop")
         return False
     last = float(df["close"].iloc[-1])
     _atr = atr(df)
     if math.isnan(_atr):
         return False
-    window = max(ATR_PERIOD, 2 * ATR_PERIOD)
+    window = max(SETTINGS.atr_period, 2 * SETTINGS.atr_period)
     highest = float(df["close"].rolling(window).max().iloc[-1])
     # highest = float(df["high"].rolling(window).max().iloc[-1])
-    return last < (highest - EXIT_MULTIPLE * _atr)
+    return last < (highest - SETTINGS.exit_multiple * _atr)
 
 
 def should_exit(rank: RankItem | None, pct_rank: float, k: KiteConnect | None = None) -> bool:
     """Exit conditions: rank drop, below 100-EMA, or trailing stop."""
-    cond_rank = (rank is None) or (pct_rank > CUT_OFF_PCT) or (rank.close <= rank.ema100)
+    cond_rank = (rank is None) or (pct_rank > SETTINGS.cut_off_pct) or (rank.close <= rank.ema100)
     if k is None or rank is None:
         return cond_rank
     return cond_rank or _trailing_stop_hit(k, rank.symbol)
@@ -866,7 +853,7 @@ def live_value(k: KiteConnect, pf: dict[str, int]) -> float:
 
 def resize_positions(k: KiteConnect, pf: dict[str, int], bull: bool) -> None:
     """Every even ISO week (IST), rebalance sizes toward ATR targets (cash-aware)."""
-    if (ist_now().isocalendar().week % 2) and not FORCE_RESIZE:  # odd ISO week → skip
+    if (ist_now().isocalendar().week % 2) and not SETTINGS.force_resize:  # odd ISO week → skip
         logger.debug("Size rebalance skipped (odd week, IST)")
         return
 
@@ -994,13 +981,26 @@ def raise_cash_if_needed(k: KiteConnect, ranks: list[RankItem], pf: dict[str, in
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # 0) Load and validate configuration; a bad value names itself and stops the run
+    try:
+        configure(Settings.from_env())
+    except SettingsError as exc:
+        logger.error("%s", exc)
+        raise SystemExit(2) from None
+
     # 1) Run only on the configured weekday in IST (0=Mon; default 2=Wed)
-    if not KILL_SWITCH and ist_now().weekday() != TRADING_WEEKDAY:
+    if not SETTINGS.kill_switch and ist_now().weekday() != SETTINGS.trading_weekday:
         logger.info("Not scheduled trading weekday (IST) – abort")
         return
 
     # 2) Load current portfolio, ledgers & authenticate Kite
-    portfolio = read_portfolio(PORTFOLIO_FILE)
+    portfolio = read_portfolio(SETTINGS.portfolio_file)
     init_cash_balance()
     kite = authenticate()
 
@@ -1009,9 +1009,9 @@ def main() -> None:
     print(live_value(kite, portfolio))
 
     # 3.5) KILL SWITCH – liquidate everything and exit
-    if KILL_SWITCH:
+    if SETTINGS.kill_switch:
         liquidate_all(kite, portfolio)
-        write_portfolio(OUT_FILE, portfolio)
+        write_portfolio(SETTINGS.out_file, portfolio)
         logger.warning("KILL SWITCH run finished. Final cash: %.2f", CASH_BAL)
         return
 
@@ -1021,7 +1021,7 @@ def main() -> None:
     NIFTY500_SET = set(fetch_index_constituents("NIFTY 500"))
     NIFTY_FULL_SET = set(fetch_nifty_constituents())
 
-    if USE_FULL_NIFTY_UNIVERSE:
+    if SETTINGS.use_full_nifty_universe:
         NIFTY500_SET = NIFTY_FULL_SET
         logger.info("Using full NIFTY universe: %d symbols", len(NIFTY500_SET))
 
@@ -1060,10 +1060,10 @@ def main() -> None:
     if bull and cash_left > 0:
         for idx, r in enumerate(ranks):
             pct_rank = (idx + 1) / total
-            if pct_rank > CUT_OFF_PCT:
+            if pct_rank > SETTINGS.cut_off_pct:
                 continue
-            if len(portfolio) >= MAX_POSITIONS:
-                logger.info("Max positions reached (%d) – stopping new buys", MAX_POSITIONS)
+            if len(portfolio) >= SETTINGS.max_positions:
+                logger.info("Max positions reached (%d) – stopping new buys", SETTINGS.max_positions)
                 break
             if r.symbol in portfolio or r.symbol in sold_symbols:
                 continue
@@ -1077,7 +1077,9 @@ def main() -> None:
             cost_needed = gross_cost_for_buy(r.close, qty)
             if cost_needed > CASH_BAL + 1e-6:
                 # buy as much as possible
-                affordable_qty = int(math.floor(CASH_BAL / (r.close * (1.0 + FEES_PCT + SLIPPAGE_PCT))))
+                affordable_qty = int(
+                    math.floor(CASH_BAL / (r.close * (1.0 + SETTINGS.fees_pct + SETTINGS.slippage_pct)))
+                )
             else:
                 affordable_qty = qty
 
@@ -1090,7 +1092,7 @@ def main() -> None:
         logger.info("No new buys – bear regime or no cash.")
 
     # 12) Write next portfolio snapshot
-    write_portfolio(OUT_FILE, portfolio)
+    write_portfolio(SETTINGS.out_file, portfolio)
     logger.info(
         "Done. Final → Equity: %.0f  | Cash: %.0f  | Holdings: %d",
         CASH_BAL + live_value(kite, portfolio),

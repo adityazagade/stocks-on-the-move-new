@@ -156,4 +156,49 @@ Introduce `stocks_on_the_move/settings.py` with a single
 
 ## Implementation Status
 
-Not started.
+Code complete on 2026-09-12; awaiting plan step 3 by the owner.
+
+- Step 1 landed as `src/stocks_on_the_move/settings.py` with `render_example()`,
+  the `--example` and `--check` commands, `tests/test_settings.py` and a
+  regenerated `.env.example`. `pydantic-settings>=2.15,<3` added with `uv add`
+  (resolves pydantic 2.13.5, pydantic-settings 2.15.0).
+- Step 2 landed as the cut-over: `momentum.py` has no `os.getenv`, no
+  import-time `mkdir` and no import-time logging configuration; `kite_auth.py`
+  lost its own environment reads and receives an `AuthSettings` built from
+  `Settings`; `tests/conftest.py` sets no environment variables and instead
+  installs `Settings.from_values(...)` per test.
+- Step 3 is outstanding: a paper run with the owner's `.env`, then
+  `KILL_SWITCH=false` (must run), `ALLOW_KITE_EXECUTION=maybe` and
+  `TRADING_WEEKDAY=7` (must refuse with the variable named). The last two
+  were exercised locally against the entry point; the paper run needs Kite.
+  Status moves to Implemented after that.
+
+## Notes
+
+Refinements made while implementing, all inside the decision above:
+
+- **Credentials are required, not defaulted.** The old placeholders
+  `YOUR_API_KEY` / `YOUR_API_SECRET` never produced a working run, so
+  `KITE_API_KEY` and `KITE_API_SECRET` are required and non-empty, and a
+  missing one is reported at startup like any other bad value.
+- **Ranges beyond the listed ones.** In the same spirit as the list in the
+  Decision: `SLIPPAGE_PCT`, `MIN_VOLUME`, `CANDLE_SLEEP_SEC`, `ACCOUNT_VALUE`
+  and `STARTING_CASH` non-negative; `EXIT_MULTIPLE` and `MAX_ATR_PCT`
+  positive; `KITE_MAX_RETRIES` at least 1 (zero made `kite_call` return
+  `None` without calling); `KITE_REDIRECT_PORT` in 0..65535.
+- **Whitespace is stripped before parsing**, so `ALLOW_KITE_EXECUTION=0 `
+  means off rather than failing; junk still refuses to start.
+- **`Settings.from_values(**kw)`** builds from explicit values with the
+  environment source removed, so tests and the golden test (ADR-009) are
+  deterministic whatever the developer's shell holds.
+- **`--check`** prints the loaded configuration with secrets masked, or the
+  error report and exit code 2. It exists so plan step 3 can be run on any
+  weekday without reaching Kite.
+- **The interim handle** is `momentum.SETTINGS`, a placeholder object until
+  `configure()` runs; any read before that raises a `RuntimeError` naming
+  the fix instead of an `AttributeError`.
+- **`look_backs` is gone**; its only reader now uses `LOOKBACK_R126`
+  directly, which is the same value.
+- pydantic reports a derived default it could not compute as its own error
+  (`default_factory_not_called`); `describe_errors` drops that line because
+  the `ACCOUNT_VALUE` line already says what is wrong.
