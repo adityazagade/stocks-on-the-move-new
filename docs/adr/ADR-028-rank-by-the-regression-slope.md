@@ -1,8 +1,8 @@
 # ADR-028: Rank by the book's regression slope, on backtest evidence
 
-- **Status**: Proposed
+- **Status**: Rejected
 - **Date**: 2026-09-12
-- **Last Updated**: 2026-09-12
+- **Last Updated**: 2026-09-13
 - **Author**: Aditya Zagade
 
 ## Context
@@ -135,8 +135,9 @@ next person who wonders why the score is what it is can read the numbers.
 
 ## Implementation Status
 
-Proposed; awaiting the comparison (plan step 2), which needs the owner's
-warm cache (ADR-023 step 6).
+**Rejected on 2026-09-13** by the acceptance gate, on the comparison below.
+The blend stays. Nothing from the Decision was implemented; the only code
+this ADR produced is the `score` switch that let the comparison run.
 
 - On 2026-09-13 the harness gained what the comparison needs and nothing
   more: `StrategyParams.score`, `"blend"` by default and `"slope"` for the
@@ -153,3 +154,54 @@ warm cache (ADR-023 step 6).
 
   Their summaries go in Notes whatever the outcome; the owner then sets
   Accepted or Rejected against the gate above.
+
+## Notes
+
+**The comparison**, run on 2026-09-13 over the owner's warm cache: 218
+Wednesdays from 2022-07-13 to 2026-09-09, today's NIFTY 500 as the
+universe throughout, every intent filled at the run date's close with the
+configured fees and slippage, all other parameters at their live values
+(the simple averages of ADR-024, the gap filter of ADR-025, the position
+fraction of ADR-026, the cadence of ADR-027).
+
+| Measure | A, the blend | B, the book's slope | C, the blend with 21/63/126 |
+| --- | --- | --- | --- |
+| CAGR | 18.14 % | 18.03 % | 18.88 % |
+| Annualised volatility | 10.07 % | 10.46 % | 10.12 % |
+| Return over volatility | 1.800 | 1.724 | 1.866 |
+| Maximum drawdown | -6.49 % | -10.15 % | -7.94 % |
+| Average positions | 19.2 | 19.8 | 19.9 |
+| Average exposure | 50.3 % | 48.9 % | 49.2 % |
+| Trades per year | 963 | 519 | 578 |
+| Turnover per year | 21.1× | 7.2× | 8.9× |
+
+**The gate, applied.** B is 4.2 percent below A on return over volatility,
+outside the two percent the gate allows, and its maximum drawdown is
+deeper by 3.7 points. B does have the lower turnover, a third of A's, but
+the gate needs all three, so this ADR is Rejected and the blend stays.
+
+**What the numbers also say.** The blend trades 963 times a year for about
+nineteen positions: the whole portfolio turns over twenty-one times a year,
+which is what sixty percent weight on a five-day return does. Variant C, the
+same blend over the book's lookbacks, cuts trades by forty percent and
+turnover by fifty-eight percent while its return over volatility is 3.7
+percent higher and its CAGR three quarters of a point higher; its drawdown
+is 1.45 points deeper than A's. C does not beat A on every measure, so the
+gate's follow-up clause does not fire by itself. Whether lower turnover,
+which the fixed slippage here understates the value of, is worth 1.45
+points of drawdown is a judgment, and the natural next ADR: propose C with
+a gate of its own, written before any further runs.
+
+**One more figure.** The blend opened 1,606 new positions over the range's
+4.2 years for about nineteen slots: an average holding of two and a half
+weeks. The strategy the book describes holds for months.
+
+**Caveats** are the harness's (ADR-023): survivorship bias flatters all
+three alike; fills at the close with fixed slippage flatter the highest
+turnover most, so the blend's edge here is, if anything, overstated
+relative to B and C; one name whose candles ended inside the range sat as
+a zero-valued holding in all three runs.
+
+The three result directories are `runs/backtests/2022-07-13_2026-09-09-blend`,
+`-slope` and `-book-lookbacks`; `compare blend slope book-lookbacks` prints
+the table above.

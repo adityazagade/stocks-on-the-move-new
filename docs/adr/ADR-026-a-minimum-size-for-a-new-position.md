@@ -129,3 +129,18 @@ Implemented on 2026-09-13, one pull request.
 - The golden diff is described in the commit body.
 - **Plan step 3**, the fraction at 0, 0.5 and 1 over the cached history,
   waits for the owner's warm cache (ADR-023 step 6).
+
+## Notes
+
+**Plan step 3, run on 2026-09-13** over the owner's warm cache: 218
+Wednesdays from 2022-07-13 to 2026-09-09, the fraction at 0, 0.5 and 1,
+everything else at the live values. The three runs are byte-identical:
+same equity curve, same trades. The rule never fired, because with
+`RISK_FACTOR` 0.001 the portfolio held about nineteen positions at about
+half of equity in cash, so no candidate was ever short of cash. It matters
+only when cash binds: a smaller account, a higher risk factor, or a run
+that has just spent its cash on exits' replacements. The default stays at
+one half as the guard for those cases; there is no evidence either way
+about its value, and none expected while exposure sits near fifty percent.
+Result directories `runs/backtests/2022-07-13_2026-09-09-blend`,
+`-fraction-0` and `-fraction-1`.
