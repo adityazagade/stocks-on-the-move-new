@@ -11,13 +11,16 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from stocks_on_the_move.artifacts import Artifacts, NoArtifacts
 from stocks_on_the_move.broker import Broker, Side
 from stocks_on_the_move.candles import CandleStore
 from stocks_on_the_move.settings import Settings
+
+if TYPE_CHECKING:
+    from stocks_on_the_move.universe import UniverseSource
 
 # Timezone: run scheduling and biweekly parity in IST
 IST = ZoneInfo("Asia/Kolkata")
@@ -73,7 +76,8 @@ class RunContext:
 
     ``paper`` only labels the trade log lines; paper mode itself is the choice
     of a ``PaperBroker`` as ``broker``. ``universe`` supplies the base symbols
-    the strategy may hold; ``None`` means the NSE archives, per settings.
+    the strategy may hold; ``None`` means the NSE archives with their last-good
+    copy (ADR-020), per settings.
     ``artifacts`` receives every table the run writes (ADR-006); the default
     writes nothing. ``sleep`` is what the wait for a fill sleeps with (ADR-019);
     tests pass a no-op.
@@ -86,7 +90,7 @@ class RunContext:
     paper: bool = False
     portfolio: Portfolio = field(default_factory=Portfolio)
     tokens: dict[str, int] = field(default_factory=dict)  # "EXCH:SYMBOL" -> instrument_token
-    universe: Callable[[], set[str]] | None = None
+    universe: UniverseSource | None = None
     artifacts: Artifacts = field(default_factory=NoArtifacts)
     sleep: Callable[[float], None] = time.sleep
 

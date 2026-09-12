@@ -1,6 +1,6 @@
 # ADR-020: Split the strategy module along its seams
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -173,7 +173,8 @@ that is no longer true. `CLAUDE.md` changes nothing: no rule moves.
 
 ## Implementation Status
 
-Accepted on 2026-09-12 by the owner's instruction to implement. In progress.
+Implemented on 2026-09-12 in three pull requests (#17, #18 and the step-3 one),
+each with the golden expected files untouched and CI green on `main`.
 
 - **Step 1, the leaves**: `context.py` (the run context, portfolio, fill,
   token cache, the IST clock), `indicators.py` (the strategy constants,
@@ -194,8 +195,26 @@ Accepted on 2026-09-12 by the owner's instruction to implement. In progress.
   the tests call `_trailing_stop` and `exit_reasons`. The pipeline tests
   listen to the package logger, since their lines now come from three
   modules. Golden expected files untouched.
+- **Step 3, the top**: `pipeline.py` holds the steps, `buy_candidates` as
+  the step-11 loop's own function, `_finish` and `run`; `reporting.py`
+  gains `ranking_rows`; `momentum.py` is 124 lines of entry point with the
+  module map in its docstring, and the console script is unchanged. The
+  onboarding guide's section 1 and the README's layout carry the same map.
+  Then, on its own: `UniverseSource`, `StaticUniverse` for the tests, and
+  `NseArchives` with the last-good copy at `CACHE_DIR/universe-<name>.txt`,
+  dated on its first line; an unreachable NSE falls back to it with a
+  WARNING naming the age, a second past 30 days, and aborts as before when
+  there is no copy. `RunContext.universe` is a `UniverseSource`.
+  `tests/test_universe.py` covers the fetch, the fallback, the stale copy,
+  the missing copy and an unwritable cache directory.
+- Plan step 4 held at every commit: golden untouched, suite green, `ty`
+  clean, CI green on `main` after each merge.
 
 ## Notes
 
 The order of the split follows the import graph: leaves first so that each
-new module imports only what already moved.
+new module imports only what already moved. `reporting.py` came one step
+early, in the second pull request, because the rules and the pipeline both
+read the column lists. `context.py` names `UniverseSource` under
+`TYPE_CHECKING` only, since `universe.py` imports the context for the
+instrument filter.
