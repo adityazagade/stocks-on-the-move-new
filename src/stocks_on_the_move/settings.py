@@ -94,6 +94,15 @@ class Settings(BaseSettings):
     atr_period: int = Field(20, gt=0, description="Days in the ATR used for sizing and the trailing stop.")
     max_weight: float = Field(0.10, gt=0, le=1, description="Cap on one position as a fraction of equity.")
     max_positions: int = Field(25, gt=0, description="Stop opening new positions at this count.")
+    min_position_fraction: float = Field(
+        0.5,
+        ge=0,
+        le=1,
+        description=(
+            "Open a new position only when the cash covers at least this fraction of its target size (ADR-026). "
+            "1 = full positions only, the book's rule; 0 = buy whatever the cash covers."
+        ),
+    )
     cut_off_pct: float = Field(
         0.20, gt=0, le=1, description="Hold and buy only names ranked in this top fraction of the universe."
     )
@@ -241,6 +250,7 @@ EXAMPLE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "atr_period",
             "max_weight",
             "max_positions",
+            "min_position_fraction",
             "cut_off_pct",
             "exit_multiple",
             "min_volume",

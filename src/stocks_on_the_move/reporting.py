@@ -25,7 +25,7 @@ EXIT_COLUMNS = ["symbol", "qty", "rank", "pct_rank", "close", "ma100", "stop_lev
 SIZING_COLUMNS = ["symbol", "qty", "price", "atr", "risk_qty", "cap_qty", "target_qty", "delta", "action"]
 
 
-CANDIDATE_COLUMNS = ["rank", "symbol", "pct_rank", "decision", "qty", "est_cost", "cash_after"]
+CANDIDATE_COLUMNS = ["rank", "symbol", "pct_rank", "decision", "qty", "target_qty", "est_cost", "cash_after"]
 
 
 def ranking_rows(ranks: Sequence[RankItem], held: Collection[str]) -> list[dict[str, Any]]:

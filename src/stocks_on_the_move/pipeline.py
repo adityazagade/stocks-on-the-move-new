@@ -312,7 +312,8 @@ def buy_candidates(ctx: RunContext, ranks: list[RankItem], bull: bool, account_e
 
     Every ranked name visited gets a row in candidates.csv with the decision taken
     on it. One intent is decided at a time, because each fill changes the equity
-    the next size is computed from.
+    the next size is computed from. A candidate the cash covers only below
+    ``min_position_fraction`` of its target is passed over for the next (ADR-026).
     """
     s = ctx.settings
     pf = ctx.portfolio
@@ -352,9 +353,12 @@ def buy_candidates(ctx: RunContext, ranks: list[RankItem], bull: bool, account_e
                 affordable_qty = int(math.floor(pf.cash / (r.close * (1.0 + s.fees_pct + s.slippage_pct))))
             else:
                 affordable_qty = qty
-            row.update(qty=affordable_qty, est_cost=gross_cost_for_buy(s, r.close, affordable_qty))
+            row.update(qty=affordable_qty, target_qty=qty, est_cost=gross_cost_for_buy(s, r.close, affordable_qty))
             if affordable_qty < params.min_shares:
                 row["decision"] = "SKIP:no_cash"
+                continue
+            if affordable_qty < params.min_position_fraction * qty:  # a fragment of the risk it was sized for (ADR-026)
+                row["decision"] = "SKIP:below_min_fraction"
                 continue
 
             intent = TradeIntent(r.symbol, "BUY", affordable_qty, "new_position", r.close)
