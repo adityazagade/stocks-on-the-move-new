@@ -13,8 +13,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from stocks_on_the_move.broker import Broker, Order, OrderStatus, OrderType, Side
-from stocks_on_the_move.context import Fill, RunContext
-from stocks_on_the_move.indicators import MIN_SHARES
+from stocks_on_the_move.context import Fill, RunContext, strategy_params
 from stocks_on_the_move.ledger import record_trade
 from stocks_on_the_move.settings import Settings
 from stocks_on_the_move.universe import NO_MARKET_SERIES, series_of
@@ -189,7 +188,7 @@ def _place(ctx: RunContext, sym: str, side: Side, qty: int, price: float, order_
 
 def safe_buy(ctx: RunContext, sym: str, qty: int) -> Fill | None:
     """Place a BUY order and book what filled; ``None`` when nothing was sent (ADR-019)."""
-    if qty < MIN_SHARES:
+    if qty < strategy_params(ctx).min_shares:
         return None
     price_used, order_type = _price_for(ctx, sym, "BUY")
     if price_used <= 0:
@@ -204,7 +203,7 @@ def safe_buy(ctx: RunContext, sym: str, qty: int) -> Fill | None:
 
 def safe_sell(ctx: RunContext, sym: str, qty: int) -> Fill | None:
     """Place a SELL order and book what filled; ``None`` when nothing was sent (ADR-019)."""
-    if qty < MIN_SHARES:
+    if qty < strategy_params(ctx).min_shares:
         return None
     price_used, order_type = _price_for(ctx, sym, "SELL")
     if price_used <= 0:

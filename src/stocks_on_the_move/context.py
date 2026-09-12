@@ -17,6 +17,8 @@ from zoneinfo import ZoneInfo
 from stocks_on_the_move.artifacts import Artifacts, NoArtifacts
 from stocks_on_the_move.broker import Broker, Side
 from stocks_on_the_move.candles import CandleStore
+from stocks_on_the_move.indicators import Snapshot
+from stocks_on_the_move.params import StrategyParams
 from stocks_on_the_move.settings import Settings
 
 if TYPE_CHECKING:
@@ -80,7 +82,9 @@ class RunContext:
     copy (ADR-020), per settings.
     ``artifacts`` receives every table the run writes (ADR-006); the default
     writes nothing. ``sleep`` is what the wait for a fill sleeps with (ADR-019);
-    tests pass a no-op.
+    tests pass a no-op. ``snapshots`` is filled once per run by the pipeline's
+    gather step (ADR-021); ``params`` overrides the parameters built from the
+    settings, for a backtest's variants.
     """
 
     settings: Settings
@@ -93,6 +97,13 @@ class RunContext:
     universe: UniverseSource | None = None
     artifacts: Artifacts = field(default_factory=NoArtifacts)
     sleep: Callable[[float], None] = time.sleep
+    snapshots: dict[str, Snapshot] = field(default_factory=dict)  # symbol -> what the rules read (ADR-021)
+    params: StrategyParams | None = None
+
+
+def strategy_params(ctx: RunContext) -> StrategyParams:
+    """The run's parameters: the context's override, else the ones its settings imply."""
+    return ctx.params if ctx.params is not None else StrategyParams.from_settings(ctx.settings)
 
 
 def build_token_cache(ctx: RunContext) -> None:
