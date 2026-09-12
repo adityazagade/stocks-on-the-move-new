@@ -1,6 +1,6 @@
 # ADR-010: Static type checking with ty
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -145,7 +145,11 @@ and one line.
 
 ## Implementation Status
 
-Code complete on 2026-09-12; awaiting the CI half of plan step 3.
+Implemented on 2026-09-12. Plan step 3 passed in full: the hook rejected a
+deliberate type error locally; pull request #8 ran green with the `ty` hook
+in the `pre-commit hooks` job; scratch pull request #9, carrying the same
+deliberate error, went red on that job (`invalid-assignment`) with both
+`pytest` jobs green; `main` is green after the merge (`d28dbe2`).
 
 - **Step 1, the trial.** ty 0.0.80 on `src/` and `tests/` after ADR-008:
   17 diagnostics, all real: 14 `invalid-argument-type`, 1
@@ -167,12 +171,10 @@ Code complete on 2026-09-12; awaiting the CI half of plan step 3.
   factory parameter is `Callable[..., Any]`. One suppression remains, in the
   test that deliberately passes an invalid side to `Order`, on one line,
   naming the rule, with its reason. `# type: ignore` comments are gone.
-- **Step 3, half done.** Locally, a scratch module with a deliberate type
-  error makes the `ty` hook fail with `invalid-assignment` and exit 1. The
-  CI half happens with the pull request that carries this ADR: a scratch
-  branch with the same error under a draft pull request must go red on the
-  `pre-commit hooks` job; the branch is deleted afterwards. Status moves to
-  Implemented after that.
+- **Step 3.** Locally, a scratch module with a deliberate type error made
+  the `ty` hook fail with `invalid-assignment` and exit 1; in CI the same
+  error on a scratch branch made the `pre-commit hooks` job red while both
+  `pytest` jobs stayed green. Results above; the scratch branch is deleted.
 
 ## Notes
 

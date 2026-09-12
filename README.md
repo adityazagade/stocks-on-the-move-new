@@ -68,7 +68,8 @@ Useful switches (the full list, with defaults, is in `.env.example`):
 ## Development
 
 ```sh
-uv run pytest                 # unit tests, including whole runs against a fake broker
+uv run pytest                 # unit tests, whole runs against a fake broker, the golden test
+uv run pytest --update-golden # rewrite tests/fixtures/golden/expected/ after an intended change (ADR-009)
 uv run ruff check --fix .     # lint: pyflakes, isort, pyupgrade, bugbear, ...
 uv run ruff format .          # format
 uv run ty check               # type-check src/ and tests/ (ADR-010)

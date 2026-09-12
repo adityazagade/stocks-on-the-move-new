@@ -267,13 +267,27 @@ fake client. `tests/test_momentum.py` covers the pure helpers: symbol parsing,
 portfolio CSV round-trips, fee arithmetic, ATR and the momentum score.
 `tests/test_broker.py` covers the Kite adapter's mapping and backoff and the
 paper wrapper; `tests/test_candles.py` the cache paths; `tests/test_artifacts.py`
-the run directory; `tests/test_pipeline.py`
+the run directory; `tests/test_golden.py` is the golden-file regression test
+(below); `tests/test_pipeline.py`
 everything above the helpers, including whole `run(ctx)` calls in bull, bear
 and kill-switch markets. To test a strategy function, take the `ctx` fixture
 (a `RunContext` over `fakes.FakeBroker` with the clock frozen on a Wednesday
 in an even ISO week), add instruments with `broker.add_equity(...)` and
 prices with `broker.ltps[...]`, then assert on `broker.orders` and
 `ctx.portfolio`.
+
+**The golden test.** `tests/test_golden.py` (ADR-009) runs the whole pipeline
+against the frozen, synthetic inputs in `tests/fixtures/golden/` twice, on an
+even and an odd ISO week, and compares the ADR-006 tables (`universe`,
+`ranking`, `exits`, `sizing`, `candidates`, `trades`, `portfolio_after`) with
+the committed files under `expected/`. It is the answer to "did the ranking,
+the exits or the sizes change" for a strategy edit, a pandas upgrade (ADR-003)
+or a Python bump. When a change is meant to alter them, run
+`uv run pytest --update-golden`, read the diff of `expected/`, and explain it
+in the commit body; a silently regenerated golden is no test at all. The
+fixtures are seeded random walks, not market data, because the repository is
+public; `make_fixtures.py` documents the role each instrument plays and is
+re-run only deliberately, followed by `--update-golden`.
 
 **Decisions.** Every change beyond a typo starts with an Architecture
 Decision Record in `docs/adr/`. Draft it as Proposed, commit it on its own,
