@@ -1,0 +1,86 @@
+# Stocks on the Move (NSE)
+
+Weekly momentum-rotation portfolio for NSE equities, adapted from Andreas
+Clenow's *Stocks on the Move*. The strategy ranks the NIFTY 500 by
+risk-adjusted momentum, gates new entries on the index trend, sizes positions
+by ATR, trades through Zerodha Kite Connect, and keeps CSV ledgers of the
+portfolio, cash and trades.
+
+> Research code. Real-money use needs broker-confirmed fills, order-state
+> handling and retries beyond what is implemented here.
+
+## Requirements
+
+- [uv](https://docs.astral.sh/uv/) (`brew install uv`). It provisions the pinned
+  Python from `.python-version` and every dependency. Nothing else to install.
+- A Zerodha Kite Connect API key and secret.
+
+## Setup
+
+```sh
+uv sync                 # creates .venv (Python 3.13) with runtime + dev deps
+cp .env.example .env    # fill in KITE_API_KEY and KITE_API_SECRET
+```
+
+PyCharm: point the project interpreter at `.venv/bin/python`.
+
+## Running
+
+```sh
+uv run --env-file .env stocks-on-the-move
+```
+
+`uv run python -m stocks_on_the_move` is equivalent. A run only proceeds on
+the configured trading weekday (`TRADING_WEEKDAY`, default Wednesday, IST) and
+exits immediately otherwise. It prints a Kite login URL and waits for you to
+paste the request token.
+
+Useful switches (the full list, with defaults, is in `.env.example`):
+
+| Variable | Effect |
+| --- | --- |
+| `ALLOW_KITE_EXECUTION=0` | Paper mode: runs the whole pipeline and writes ledgers, sends no orders |
+| `KILL_SWITCH=1` | Liquidate everything and exit, ignoring the weekday guard |
+| `FORCE_RESIZE=1` | Force the position-size rebalance regardless of the fortnightly schedule |
+| `ENV_CASHFLOW=<amount>` | Record a deposit (+) or withdrawal (-) before trading |
+
+## Files
+
+| Path | Purpose |
+| --- | --- |
+| `current_portfolio.csv` | Positions going into the run (`SYMBOL,QUANTITY`, no header) |
+| `next_portfolio.csv` | Positions after the run; promote to `current_portfolio.csv` before the next one |
+| `cash_ledger.csv` | Deposits and withdrawals |
+| `trades_ledger.csv` | Every placed or paper trade with fees and slippage |
+| `.cache_candles/` | Incremental daily-candle cache per instrument token (git-ignored) |
+
+## Development
+
+```sh
+uv run pytest                 # unit tests for the pure strategy helpers
+uv run ruff check --fix .     # lint: pyflakes, isort, pyupgrade, bugbear, ...
+uv run ruff format .          # format
+uv run pre-commit install     # run the above automatically on every commit
+```
+
+Dependency changes go through uv so that `uv.lock` stays authoritative:
+
+```sh
+uv add <package>              # runtime dependency
+uv add --dev <package>        # dev-only dependency
+uv lock --upgrade && uv sync  # refresh everything within the pyproject bounds
+```
+
+## Layout
+
+```
+src/stocks_on_the_move/
+  momentum.py     the strategy (formerly test_updated_v4.py)
+  __main__.py     python -m entry point
+tests/            pytest suite
+archive/          earlier iterations v0 to v3, kept for reference, not installed
+```
+
+## License
+
+Apache 2.0. See `LICENSE`.
