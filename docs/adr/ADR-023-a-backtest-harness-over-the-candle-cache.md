@@ -1,6 +1,6 @@
 # ADR-023: A backtest harness over the candle cache
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -172,7 +172,45 @@ variants from the same range.
 
 ## Implementation Status
 
-Proposed; nothing implemented.
+Implemented on 2026-09-13, one pull request. Plan steps 2 to 5 are done;
+step 6's five-year baseline run needs a Kite login and is the owner's.
+
+- **The replay is plan mode over history.** For each run date the harness
+  builds a `RunContext` whose settings are the live ones redirected: plan
+  mode, no execution, every state file under the output directory. The
+  pipeline's `run` executes unchanged; `PlanExecutor` fills every sendable
+  intent at the price `ReplayBroker` quotes, the run date's close; the
+  ledger writes nothing, so the harness appends each date's trade rows to
+  its own running ledger and writes the positions to its own portfolio file,
+  which the next date's `run` reconstructs cash and positions from. That is
+  the ADR's `SimExecutor` and in-memory ledger, by reuse rather than by a
+  second implementation.
+- **As-of discipline.** `ReplayCandles` implements the new `CandleSource`
+  protocol over frames loaded once from the cache; `get` slices the same
+  calendar window `CandleStore` does (`candles.window`) ending the day
+  before the run date, so no rule sees the run date's candle. A test asserts
+  it for three dates.
+- **Warm-up** is a subcommand, `warm --history-days`, not an option on
+  `run`: it needs a login and runs once. It fetches in chunks of 1,900 days,
+  merges into the existing cache files as `CandleStore` would, and saves the
+  instrument list beside them; `run` and `compare` are offline. The saved
+  universe copy (ADR-020) is the fixed constituents list.
+- **Outputs** as decided: `equity.csv`, `weekly.csv`, `trades.csv` with the
+  intent's reason, `params.json` with the parameter set and the redacted
+  settings, `summary.json` with the note on its first key and the metrics
+  (CAGR, annualised volatility, return over volatility, maximum drawdown and
+  its dates, positions, exposure, trades and turnover per year).
+  `--set NAME=VALUE` is typed by the `StrategyParams` field it names.
+- **Tests** (`tests/test_backtest.py`, eleven) replay the golden fixtures'
+  37 instruments over eight Wednesdays: no future candle leaks, the replay
+  broker prices at the close and sends nothing, run dates move to the next
+  trading day and skip a closed week, overrides are typed, the replay trades
+  and carries state inside its own directory, two replays are byte-identical,
+  the metrics on a hand-built series, a chunked warm-up that merges without
+  duplicates, the comparison table, and the refusal without a warm cache.
+  260 tests pass; `ty` clean; golden untouched.
+- **Step 6, the owner's**: `warm` once, then a baseline over the full range;
+  the Notes' first comparison follows.
 
 ## Notes
 
