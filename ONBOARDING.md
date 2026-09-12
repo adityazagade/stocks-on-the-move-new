@@ -24,8 +24,8 @@ working directory. There is no database, no scheduler and no UI. The whole
 strategy is one module, `src/stocks_on_the_move/momentum.py`, run top to
 bottom by `run()` once `main()` has assembled a `RunContext`. Beside it sit
 `broker.py` and `candles.py` (the broker boundary and the candle cache,
-ADR-008), `settings.py` (every knob, ADR-007) and `kite_auth.py` (the Kite
-login, ADR-005).
+ADR-008), `artifacts.py` (the per-run directory, ADR-006), `settings.py`
+(every knob, ADR-007) and `kite_auth.py` (the Kite login, ADR-005).
 
 Where this port deviates from the book, and it matters when you read the code:
 
@@ -122,9 +122,11 @@ A stock is ranked only if it passes all of these, in order:
 4. 20-day average volume at least `MIN_VOLUME`.
 5. ATR(20) no more than `MAX_ATR_PCT` of price.
 
-Anything that throws inside the loop is skipped and logged at DEBUG, so a
-symbol quietly disappearing from the ranking is normal. Bump `logging` to
-DEBUG when you need to see why.
+Every instrument's verdict, `ranked` or `excluded` with the rule that
+stopped it (`history`, `below_ema100`, `volume`, `atr_pct`,
+`insufficient_data`, `error:<type>`), is a row in the run's
+`universe.csv` (ADR-006), so a symbol disappearing from the ranking is a
+file open, not a re-run at DEBUG.
 
 ### Exit rules (step 7)
 
@@ -191,6 +193,16 @@ the best bid or ask from a `quote()` depth call. `series_of` and
 **All scheduling is IST.** Weekday checks and ISO-week parity use
 `ist_now()`. Candle dates are timezone-aware IST.
 
+**Run artifacts are diagnostics, not state.** Every run past the weekday
+guard writes `runs/<date>/<time>-<mode>/` (ADR-006): the universe verdicts,
+the ranking, the exit reasons, the target sizes, the buy candidates, the
+portfolio before and after, this run's trades, the log, and `run.json` with
+the settings (credentials removed), the regime and the closing numbers.
+`runs/latest` points at the newest. The strategy never reads any of it, the
+tree is git-ignored, and a failed write is a WARNING, never an abort. The
+rule behind it: state the code reads in order to run (the ledgers) is
+versioned; output the code produces is not.
+
 **Configuration is one validated object.** `settings.Settings` (ADR-007) holds
 every environment knob with its type, default and, where a wrong value is
 dangerous, its range. `main()` loads it once with `Settings.from_env()` and
@@ -215,6 +227,7 @@ work.
 | `cash_ledger.csv` | you, or `ENV_CASHFLOW` | step 2 | `date,amount,note` |
 | `trades_ledger.csv` | every `safe_buy` / `safe_sell` | step 2 | Append-only |
 | `.cache_candles/<token>.csv` | `CandleStore` | `CandleStore` | `date,open,high,low,close,volume`; git-ignored, safe to delete |
+| `runs/<date>/<time>-<mode>/` | every step, as it completes | you | Ten files per run (ADR-006); git-ignored; `runs/latest` is a symlink to the newest |
 
 The gap between step 12 and the next run's step 2 is deliberate: the script
 assumes every order filled at the price it used. Confirming fills against the
@@ -240,7 +253,8 @@ The pre-commit hooks run ruff on every commit; `uv run pre-commit run
 fake client. `tests/test_momentum.py` covers the pure helpers: symbol parsing,
 portfolio CSV round-trips, fee arithmetic, ATR and the momentum score.
 `tests/test_broker.py` covers the Kite adapter's mapping and backoff and the
-paper wrapper; `tests/test_candles.py` the cache paths; `tests/test_pipeline.py`
+paper wrapper; `tests/test_candles.py` the cache paths; `tests/test_artifacts.py`
+the run directory; `tests/test_pipeline.py`
 everything above the helpers, including whole `run(ctx)` calls in bull, bear
 and kill-switch markets. To test a strategy function, take the `ctx` fixture
 (a `RunContext` over `fakes.FakeBroker` with the clock frozen on a Wednesday
@@ -279,7 +293,11 @@ value. Each one needs an ADR before the fix; see `docs/adr/`.
    ADR-008: `KiteBroker.call` raises `BrokerError` carrying the last message.
    Stays on this list until ADR-008's paper-run comparison is done.
 3. **Fills are assumed.** Limit orders on `BE`/`BZ` names may not fill, but
-   the ledger and the portfolio snapshot are updated as if they did.
+   the ledger and the portfolio snapshot are updated as if they did. In the
+   same family: `prune_portfolio`, `resize_positions`, `raise_cash_if_needed`
+   and `liquidate_all` adjust positions even when `safe_sell` returned `None`
+   because no price was available; `sizing.csv` shows those as
+   `SKIP:not_placed`.
 4. **`CandleStore` uses the machine's local date** (`datetime.now().date()`)
    for the end of the window while everything else uses IST. Identical on a
    machine set to IST, off by one day otherwise. ADR-008 made the date
@@ -290,8 +308,11 @@ value. Each one needs an ADR before the fix; see `docs/adr/`.
    listener, so only the first run of the day needs a person. Stays on this
    list until the validation runs in ADR-005's plan are done. Unattended
    scheduling itself is a separate, future ADR.
-6. **Broad `except Exception` in `rank_universe`** logs at DEBUG, so data
-   problems for individual symbols are invisible at the default log level.
+6. **Broad `except Exception` in `rank_universe`** used to hide data problems
+   at DEBUG. Addressed by ADR-006: every swallowed error is now an
+   `error:<type>` row in `universe.csv`. The DEBUG log line itself stays
+   until ADR-015. Stays on this list until ADR-006's paper-run comparison is
+   done.
 
 ## 8. Glossary
 

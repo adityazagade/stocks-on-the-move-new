@@ -228,7 +228,61 @@ runs make this untrue.
 
 ## Implementation Status
 
-Not started.
+Code complete on 2026-09-12; awaiting plan step 4 by the owner.
+
+- Step 1 landed as `src/stocks_on_the_move/artifacts.py`: `RunArtifacts.create`
+  (directory, collision suffix, `latest` symlink, first `run.json`), `record`,
+  `write_table`, `write_rows`, `attach_log`, `finish`, `settings_snapshot`;
+  `NoArtifacts` as the silent default on the context. `tests/test_artifacts.py`
+  covers naming, the symlink, redaction, cell formatting, the log handler and
+  the swallow-and-warn on write failure.
+- Steps 2 and 3 landed together: `evaluate_instrument` returns an
+  `Evaluation` (rank or reason plus the metrics known at that point) and
+  `rank_universe` writes `universe.csv` from it; `exit_reasons` returns an
+  `ExitCheck` and `prune_portfolio` writes `exits.csv`; `size_position`
+  returns a `Sizing` and `resize_positions` writes `sizing.csv`; the buy loop
+  writes `candidates.csv`; `record_trade` mirrors each ledger row into
+  `trades.csv`; `run()` writes the portfolios before and after and the
+  `run.json` fields; `main()` creates the directory after the weekday guard,
+  attaches the log and marks `failed:<type>` on any exception. `RUNS_DIR` is
+  a setting; `runs/` is ignored; onboarding and README updated. 178 tests.
+- Step 4 is outstanding: a same-day paper run on the ADR-008 build
+  (`3ac50d0`) and on this one; the new `ranking.csv` must match the old run's
+  `Top` lines and the `SELL`, `BUY` and `PAPER` lines must agree. This is the
+  same pair of runs ADR-007 and ADR-008 are waiting for. Status moves to
+  Implemented after that.
+
+## Notes
+
+The versioning rule adopted here, state the code reads is versioned and
+output the code produces is not, is consistent with ADR-004 as written. If
+the owner later decides the ledgers should also leave version control, that
+is a new ADR superseding ADR-004, not an edit to it.
+
+Refinements made while implementing, all inside the decision above:
+
+- **Every exit rule is evaluated for a ranked holding**, so `exits.csv` lists
+  all the reasons that fired, not just the first. The decision is the same
+  OR as before. The trailing stop reads candles the ranking step fetched
+  minutes earlier, so the extra evaluation costs no broker call.
+- **`sizing.csv` actions** are `BUY`, `SELL`, `HOLD` or `SKIP:size_error`,
+  `SKIP:bear`, `SKIP:no_cash`, `SKIP:not_placed`; `candidates.csv` decisions
+  add `SKIP:not_placed` to the list in the Decision. `not_placed` means the
+  broker call returned no price. It made a latent flaw visible: the position
+  bookkeeping in the resize, prune, raise-cash and kill paths adjusts
+  quantities even then. Recorded under rough edge 3 in the onboarding guide;
+  behaviour unchanged here.
+- **The run directory exists before the login**, so a failed login leaves a
+  `run.json` marked `failed:<type>` and a `run.log` with the traceback. If the
+  directory itself cannot be created, the run continues without artifacts
+  after one WARNING.
+- **`run.json` is rewritten on every `record`**, so a crash leaves the latest
+  known state rather than nothing. `finished` uses the machine's local zone;
+  `started` is IST from the injected clock.
+- **Floats are written with six decimals**, booleans as `true`/`false`, `NaN`
+  and `None` as empty cells, so two runs diff cleanly.
+- `trades.csv` is rewritten after every trade, not only at the end, in
+  keeping with the write-as-you-go rule.
 
 ## Notes
 

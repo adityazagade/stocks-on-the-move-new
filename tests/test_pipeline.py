@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 
 import pytest
@@ -297,3 +298,213 @@ def test_env_cashflow_is_booked_once_at_start(make_context):
     (row,) = ledger_rows(ctx.settings.cash_ledger_file)
     assert (row["date"], row["amount"], row["note"]) == (TODAY.isoformat(), "2500.00", "salary")
     assert ctx.portfolio.cash == ctx.settings.starting_cash + 2_500.0
+
+
+# ── ADR-006: reasons and artifacts ───────────────────────────────────────
+
+
+def read_table(path) -> list[dict]:
+    with open(path, newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def test_evaluate_instrument_names_the_rule_that_excluded(ctx):
+    broker = ctx.broker
+    broker.add_equity("SHORT", 1, trending_closes(10), end=TODAY)
+    broker.add_equity("FALLING", 2, trending_closes(150, daily=-0.003), end=TODAY)
+    broker._instruments.append(Instrument(3, "THIN", "NSE", "NSE", "EQ"))
+    broker.candles[3] = make_candles(trending_closes(150), end=TODAY, volume=100)
+    broker._instruments.append(Instrument(4, "WILD", "NSE", "NSE", "EQ"))
+    broker.candles[4] = make_candles(trending_closes(150), end=TODAY, spread=0.25)
+    broker.add_equity("GOOD", 5, trending_closes(150, daily=0.002), end=TODAY)
+    by_symbol = {i.tradingsymbol: i for i in broker.instruments("NSE")}
+
+    def verdict(sym):
+        return m.evaluate_instrument(ctx, by_symbol[sym])
+
+    assert (verdict("SHORT").reason, verdict("SHORT").last) == ("history", None)
+    falling = verdict("FALLING")
+    assert falling.reason == "below_ema100" and falling.last < falling.ema100 and falling.avg_vol_20 is None
+    thin = verdict("THIN")
+    assert thin.reason == "volume" and thin.avg_vol_20 == 100 and thin.atr is None
+    wild = verdict("WILD")
+    assert wild.reason == "atr_pct" and wild.atr_pct > ctx.settings.max_atr_pct
+    good = verdict("GOOD")
+    assert good.reason is None and good.rank is not None and good.rank.symbol == "GOOD"
+    assert good.row()["status"] == "ranked" and good.atr_pct < ctx.settings.max_atr_pct
+
+
+def test_evaluate_instrument_turns_a_thrown_error_into_a_reason(make_context):
+    class BrokenBroker(FakeBroker):
+        def historical_data(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    broker = BrokenBroker()
+    broker.add_equity("X", 1, [1.0], end=TODAY)
+    ctx = make_context(broker)
+    verdict = m.evaluate_instrument(ctx, broker.instruments("NSE")[0])
+    assert verdict.reason == "error:RuntimeError"
+    assert m.rank_universe(ctx, broker.instruments("NSE")) == []
+
+
+def test_exit_reasons_list_every_rule_that_fired(ctx):
+    steady = trending_closes(120, daily=0.001)
+    ctx.broker.add_equity("UP", 1, steady, end=TODAY)
+    ctx.broker.add_equity("DOWN", 2, steady[:-10] + [c * 0.5 for c in steady[-10:]], end=TODAY)
+    m.build_token_cache(ctx)
+
+    assert m.exit_reasons(ctx, None, 0.1) == m.ExitCheck(("unranked",))
+    hold = m.exit_reasons(ctx, rank("UP", close=200.0, ema100=150.0), 0.1)
+    assert hold.reasons == () and hold.sell is False and hold.stop_level is not None
+    both = m.exit_reasons(ctx, rank("UP", close=90.0, ema100=90.0), 0.9)
+    assert both.reasons == ("rank_cutoff", "below_ema100")
+    stopped = m.exit_reasons(ctx, rank("DOWN", close=200.0, ema100=150.0), 0.1)
+    assert stopped.reasons == ("trailing_stop",) and stopped.sell is True
+    assert stopped.stop_level > steady[-1] * 0.5  # the last close sits under the stop
+
+
+def test_size_position_is_the_floor_of_the_smaller_quantity(ctx):
+    ctx.broker.add_equity("AAA", 1, trending_closes(60, start=100.0), end=TODAY)
+    m.build_token_cache(ctx)
+    size = m.size_position(ctx, "AAA", 100_000.0)
+    assert size.risk_qty == pytest.approx(100_000 * ctx.settings.risk_factor / size.atr)
+    assert size.cap_qty == pytest.approx(100_000 * ctx.settings.max_weight / size.price)
+    assert size.target_qty == int(min(size.risk_qty, size.cap_qty))
+    assert m.target_shares(ctx, "AAA", 100_000.0) == size.target_qty
+
+
+def test_record_trade_mirrors_the_ledger_into_trades_csv(make_context):
+    ctx = make_context(artifacts=True)
+    m.init_cash_balance(ctx)
+    ctx.broker.ltps["NSE:TCS"] = 100.0
+    m.safe_buy(ctx, "TCS", 3)
+    m.safe_sell(ctx, "TCS", 1)
+    artifact_rows = read_table(ctx.artifacts.path / "trades.csv")
+    assert artifact_rows == ledger_rows(ctx.settings.trades_ledger_file)
+    assert [r["side"] for r in artifact_rows] == ["BUY", "SELL"]
+
+
+def test_prune_writes_a_verdict_per_holding(make_context):
+    broker = FakeBroker()
+    broker.add_equity("KEEP", 1, trending_closes(120, daily=0.002), end=TODAY)
+    broker.add_equity("DROP", 2, trending_closes(120, daily=0.002), end=TODAY)
+    ctx = make_context(broker, cut_off_pct=1.0, artifacts=True)
+    m.init_cash_balance(ctx)
+    m.build_token_cache(ctx)
+    ctx.portfolio.positions = {"KEEP": 5, "DROP": 3}
+
+    m.prune_portfolio(ctx, [rank("KEEP", close=120.0, ema100=100.0)])
+
+    rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "exits.csv")}
+    assert (rows["KEEP"]["decision"], rows["KEEP"]["reasons"], rows["KEEP"]["rank"]) == ("HOLD", "", "1")
+    assert rows["KEEP"]["stop_level"] != "" and rows["KEEP"]["price"] == ""
+    assert (rows["DROP"]["decision"], rows["DROP"]["reasons"], rows["DROP"]["rank"]) == ("SELL", "unranked", "")
+    assert float(rows["DROP"]["price"]) == pytest.approx(broker.ltps["NSE:DROP"])
+
+    m.prune_portfolio(ctx, [])
+    assert (ctx.artifacts.path / "exits.csv").read_text() == ",".join(m.EXIT_COLUMNS) + "\n"
+
+
+def test_skipped_resize_leaves_a_header_and_a_flag(make_context):
+    ctx = make_context(now=lambda: ODD_WEEK_WEDNESDAY, artifacts=True)
+    ctx.portfolio.positions = {"AAA": 10}
+    m.resize_positions(ctx, bull=True)
+    assert (ctx.artifacts.path / "sizing.csv").read_text() == ",".join(m.SIZING_COLUMNS) + "\n"
+    assert json.loads((ctx.artifacts.path / "run.json").read_text())["resize_performed"] is False
+
+
+def test_resize_records_every_holding_with_its_action(make_context):
+    broker = FakeBroker()
+    broker.add_equity("FAT", 1, trending_closes(120, start=100.0), end=TODAY)
+    broker.add_equity("THIN", 2, trending_closes(120, start=100.0), end=TODAY)
+    ctx = make_context(broker, artifacts=True)
+    m.init_cash_balance(ctx)
+    m.build_token_cache(ctx)
+    ctx.portfolio.positions = {"FAT": 1000, "THIN": 1, "GHOST": 5}
+    ctx.portfolio.cash = 100_000.0
+
+    m.resize_positions(ctx, bull=False)
+
+    rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "sizing.csv")}
+    assert rows["FAT"]["action"] == "SELL" and int(rows["FAT"]["delta"]) < 0
+    assert rows["THIN"]["action"] == "SKIP:bear" and int(rows["THIN"]["delta"]) > 0
+    assert rows["GHOST"]["action"] == "SKIP:size_error" and rows["GHOST"]["target_qty"] == ""
+    assert int(rows["FAT"]["target_qty"]) == int(rows["FAT"]["qty"]) + int(rows["FAT"]["delta"])
+
+
+def test_run_writes_the_whole_artifact_set(make_context, caplog):
+    broker = bull_market(DRIFTS)
+    ctx = make_context(broker, cut_off_pct=0.5, artifacts=True)
+    ctx.universe = lambda: set(DRIFTS)
+    ctx.artifacts.attach_log(logging.getLogger(LOG))
+
+    with caplog.at_level(logging.INFO, logger=LOG):
+        m.run(ctx)
+
+    path = ctx.artifacts.path
+    assert sorted(p.name for p in path.iterdir()) == [
+        "candidates.csv",
+        "exits.csv",
+        "portfolio_after.csv",
+        "portfolio_before.csv",
+        "ranking.csv",
+        "run.json",
+        "run.log",
+        "sizing.csv",
+        "trades.csv",
+        "universe.csv",
+    ]
+    assert (ctx.settings.runs_dir / "latest").resolve() == path.resolve()
+
+    ranking = read_table(path / "ranking.csv")
+    assert [r["symbol"] for r in ranking] == ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    assert [r["rank"] for r in ranking] == ["1", "2", "3", "4", "5"]
+    assert ranking[0]["pct_rank"] == "0.200000" and ranking[0]["held"] == "false"
+    top_lines = [line for line in caplog.text.splitlines() if "Top " in line]
+    assert [line.split("Top ")[1].split(":")[0] for line in top_lines] == [r["symbol"] for r in ranking]
+
+    universe = read_table(path / "universe.csv")
+    assert {r["status"] for r in universe} == {"ranked"} and len(universe) == 5
+
+    candidates = {r["symbol"]: r for r in read_table(path / "candidates.csv")}
+    assert candidates["AAA"]["decision"] == "BUY" and candidates["BBB"]["decision"] == "BUY"
+    assert {candidates[s]["decision"] for s in ("CCC", "DDD", "EEE")} == {"SKIP:beyond_cutoff"}
+    assert float(candidates["AAA"]["cash_after"]) > float(candidates["BBB"]["cash_after"])
+
+    assert read_table(path / "trades.csv") == ledger_rows(ctx.settings.trades_ledger_file)
+    assert (path / "exits.csv").read_text() == ",".join(m.EXIT_COLUMNS) + "\n"  # no holdings to judge
+    assert (path / "sizing.csv").read_text() == ",".join(m.SIZING_COLUMNS) + "\n"  # nothing to resize
+    assert (path / "portfolio_before.csv").read_text() == ""
+    assert m.read_portfolio(str(path / "portfolio_after.csv")) == ctx.portfolio.positions
+
+    meta = json.loads((path / "run.json").read_text())
+    assert meta["status"] == "completed" and meta["finished"] is not None
+    assert meta["mode"] == "paper" and meta["regime"]["bull"] is True
+    assert (meta["universe_size"], meta["ranked_count"], meta["resize_performed"]) == (5, 5, True)
+    assert meta["positions_before"] == {} and meta["positions_after"] == ctx.portfolio.positions
+    assert meta["cash_after"] == pytest.approx(ctx.portfolio.cash)
+    assert meta["equity_after"] > meta["cash_after"]
+    assert "KITE_API_SECRET" not in json.dumps(meta) and "test-secret" not in json.dumps(meta)
+    assert "Done. Final" in (path / "run.log").read_text()
+
+
+def test_run_records_an_aborted_status_on_an_empty_universe(make_context):
+    ctx = make_context(artifacts=True)
+    ctx.universe = set
+    m.run(ctx)
+    path = ctx.artifacts.path
+    meta = json.loads((path / "run.json").read_text())
+    assert meta["status"] == "aborted:empty_universe" and meta["universe_size"] == 0
+    assert (path / "portfolio_before.csv").exists() and not (path / "universe.csv").exists()
+    assert (path / "trades.csv").read_text() == ",".join(m.TRADE_COLUMNS) + "\n"
+
+
+def test_run_kill_switch_uses_the_kill_mode_directory(make_context):
+    broker = FakeBroker(ltp={"NSE:AAA": 100.0})
+    ctx = make_context(broker, kill_switch=True, artifacts=True)
+    m.write_portfolio(ctx.settings.portfolio_file, {"AAA": 10})
+    m.run(ctx)
+    assert ctx.artifacts.path.name.endswith("-kill")
+    meta = json.loads((ctx.artifacts.path / "run.json").read_text())
+    assert (meta["status"], meta["positions_before"], meta["positions_after"]) == ("completed", {"AAA": 10}, {})
+    assert len(read_table(ctx.artifacts.path / "trades.csv")) == 1

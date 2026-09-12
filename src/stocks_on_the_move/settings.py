@@ -124,6 +124,10 @@ class Settings(BaseSettings):
     cash_ledger_file: str = Field("cash_ledger.csv", description="Deposits and withdrawals: date, amount, note.")
     trades_ledger_file: str = Field("trades_ledger.csv", description="Every placed or paper trade and its cash effect.")
     cache_dir: Path = Field(Path(".cache_candles"), description="Per-instrument daily-candle cache; regenerable.")
+    runs_dir: Path = Field(
+        Path("runs"),
+        description="Per-run artifacts (ADR-006): a directory per run with the ranking, exits, sizes, trades and log.",
+    )
 
     @field_validator("*", mode="before")
     @classmethod
@@ -131,7 +135,7 @@ class Settings(BaseSettings):
         """A stray space in the environment must not turn a value into junk or, worse, into 'true'."""
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator("kite_session_file", "cache_dir")
+    @field_validator("kite_session_file", "cache_dir", "runs_dir")
     @classmethod
     def _expand_user(cls, value: Path) -> Path:
         return value.expanduser()
@@ -212,7 +216,7 @@ EXAMPLE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Cash flow for this run", ("env_cashflow", "cashflow_note")),
     ("Friction", ("fees_pct", "slippage_pct")),
     ("Kite rate limiting", ("kite_rps", "kite_max_retries", "candle_sleep_sec")),
-    ("Files", ("portfolio_file", "out_file", "cash_ledger_file", "trades_ledger_file", "cache_dir")),
+    ("Files", ("portfolio_file", "out_file", "cash_ledger_file", "trades_ledger_file", "cache_dir", "runs_dir")),
 )
 
 EXAMPLE_HEADER = """\
