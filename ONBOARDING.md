@@ -349,7 +349,6 @@ value. Each one needs an ADR before the fix; see `docs/adr/`.
    `_composite_momentum` docstring is a safe first commit.
 2. **`kite_call` returned `None` after exhausting retries.** Fixed by
    ADR-008: `KiteBroker.call` raises `BrokerError` carrying the last message.
-   Stays on this list until ADR-008's paper-run comparison is done.
 3. **Fills are assumed.** Limit orders on `BE`/`BZ` names may not fill, but
    the ledger and the portfolio snapshot are updated as if they did. In the
    same family: `prune_portfolio`, `resize_positions`, `raise_cash_if_needed`
@@ -363,14 +362,12 @@ value. Each one needs an ADR before the fix; see `docs/adr/`.
    ADR.
 5. **`authenticate` needed a TTY.** Addressed by ADR-005: the session is
    cached until 06:00 IST and the login redirect is captured on a local
-   listener, so only the first run of the day needs a person. Stays on this
-   list until the validation runs in ADR-005's plan are done. Unattended
+   listener, so only the first run of the day needs a person. Unattended
    scheduling itself is a separate, future ADR.
 6. **Broad `except Exception` in `rank_universe`** used to hide data problems
    at DEBUG. Addressed by ADR-006 (every swallowed error is an `error:<type>`
    row in `universe.csv`) and ADR-015 (the log line is a WARNING naming the
-   symbol and the exception type). Stays on this list until ADR-006's
-   paper-run comparison is done.
+   symbol and the exception type).
 
 ## 8. Glossary
 

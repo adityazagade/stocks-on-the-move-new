@@ -1,6 +1,6 @@
 # ADR-009: A golden-file regression test on a frozen candle cache
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -157,6 +157,10 @@ against frozen inputs and compares its outputs to committed expected files.
 - `tests/test_momentum.py` (existing unit tests)
 
 ## Implementation Status
+
+Implemented on 2026-09-12 by the owner's decision, in the same commit that
+moved ADR-006, ADR-007 and ADR-008 to Implemented, which satisfies plan
+step 1. Plan step 4 was run locally (see below).
 
 Code complete on 2026-09-12; awaiting plan step 4's confirmation by the owner
 in the pull request, and the Implemented status of ADR-006, ADR-007 and

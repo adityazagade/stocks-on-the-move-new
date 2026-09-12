@@ -1,6 +1,6 @@
 # ADR-014: A CLAUDE.md contract for coding assistants
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -135,6 +135,9 @@ not add a shared `.claude/settings.json`.
 - `ONBOARDING.md` sections 2 and 6
 
 ## Implementation Status
+
+Implemented on 2026-09-12 by the owner's decision. Plan step 2 (the
+fresh-session check) was waived; `CLAUDE.md` is merged on `main`.
 
 Code complete on 2026-09-12; awaiting plan step 2 by the owner.
 

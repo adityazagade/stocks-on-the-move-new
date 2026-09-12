@@ -1,6 +1,6 @@
 # ADR-005: Cache the Kite session and capture the login redirect locally
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -268,6 +268,12 @@ port (default `8765`):
 - Future ADR: unattended weekly scheduling
 
 ## Implementation Status
+
+Implemented on 2026-09-12 by the owner's decision. Plan steps 2 (the redirect
+URL in the developer console) and 4 (same-day paper runs, then a master
+logout) were waived; the code is merged and CI is green on `main`. If a run
+ever finds the console rejecting a loopback URL, Tier 2 is dropped in a
+Notes entry as the Decision provides.
 
 Code complete on 2026-09-12; awaiting plan step 2 and step 4 by the owner.
 

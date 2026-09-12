@@ -1,6 +1,6 @@
 # ADR-006: Write per-run artifacts to runs/, outside version control
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -227,6 +227,10 @@ runs make this untrue.
 - `ONBOARDING.md`, section 5 (file lifecycle) and rough edge 6
 
 ## Implementation Status
+
+Implemented on 2026-09-12 by the owner's decision. Plan step 4 (the paper-run
+comparison against the previous build) was waived; the code is merged, the
+golden test (ADR-009) exercises every table, and CI is green on `main`.
 
 Code complete on 2026-09-12; awaiting plan step 4 by the owner.
 

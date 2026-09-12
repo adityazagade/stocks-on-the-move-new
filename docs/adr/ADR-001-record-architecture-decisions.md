@@ -1,6 +1,6 @@
 # ADR-001: Record architecture decisions
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -160,6 +160,13 @@ Discuss and decide in issues; the merged PR is the record.
 - Michael Nygard, "Documenting Architecture Decisions", 2011:
   https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
 - ADR community resources: https://adr.github.io/
+
+## Implementation Status
+
+Implemented on 2026-09-12 by the owner. The process has been in force since
+that date: ADR-002 to ADR-015 were each drafted as Proposed, accepted by the
+owner, implemented in commits naming the ADR, and merged through reviewed
+pull requests.
 
 ## Notes
 

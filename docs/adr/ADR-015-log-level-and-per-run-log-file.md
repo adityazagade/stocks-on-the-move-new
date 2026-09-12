@@ -1,6 +1,6 @@
 # ADR-015: LOG_LEVEL, logging configured at entry, and a log file per run
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -146,6 +146,10 @@ reads out of import time; logging configuration should move with them.
 - `ONBOARDING.md`, rough edge 6
 
 ## Implementation Status
+
+Implemented on 2026-09-12 by the owner's decision. Plan step 3's real paper
+run with `LOG_LEVEL=WARNING` was waived; its local form in
+`tests/test_logging.py` passes, and CI is green on `main`.
 
 Code complete on 2026-09-12; awaiting plan step 3 by the owner.
 

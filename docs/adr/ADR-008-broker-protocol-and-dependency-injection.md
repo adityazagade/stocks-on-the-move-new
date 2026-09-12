@@ -1,6 +1,6 @@
 # ADR-008: A Broker protocol, a Kite adapter, and injected dependencies
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -170,6 +170,10 @@ Introduce a `broker.py` module and route every external call through it.
   ADR-010 (typed boundary)
 
 ## Implementation Status
+
+Implemented on 2026-09-12 by the owner's decision. Plan step 3 (the paper-run
+comparison against the ADR-007 build) was waived; the pipeline tests and the
+golden test (ADR-009) stand in for it, and CI is green on `main`.
 
 Code complete on 2026-09-12; awaiting plan step 3 by the owner.
 

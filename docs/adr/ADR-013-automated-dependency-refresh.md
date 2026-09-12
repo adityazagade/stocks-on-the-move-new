@@ -1,6 +1,6 @@
 # ADR-013: Automated dependency refresh with Dependabot
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -146,6 +146,10 @@ repository.
   auto-merge for dev dependencies)
 
 ## Implementation Status
+
+Implemented on 2026-09-12 by the owner's decision. Plan step 3 happened (the
+first run, #13, recorded below); plan step 4, the first in-bounds grouped
+pull request merged by hand, was waived ahead of Monday's run.
 
 Configured on 2026-09-12; awaiting plan steps 3 and 4, which need
 Dependabot's first Monday run and the first merged pull request.

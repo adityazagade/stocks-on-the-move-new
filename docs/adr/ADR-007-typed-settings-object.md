@@ -1,6 +1,6 @@
 # ADR-007: Replace module-level os.getenv calls with a typed settings object
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -155,6 +155,11 @@ Introduce `stocks_on_the_move/settings.py` with a single
 - pydantic-settings documentation: https://docs.pydantic.dev/latest/concepts/pydantic_settings/
 
 ## Implementation Status
+
+Implemented on 2026-09-12 by the owner's decision. Plan step 3's paper run
+with the owner's `.env` was waived; the two must-refuse cases and the
+must-run case were exercised against the entry point, and `--check` passes
+on the owner's `.env`. The code is merged and CI is green on `main`.
 
 Code complete on 2026-09-12; awaiting plan step 3 by the owner.
 
