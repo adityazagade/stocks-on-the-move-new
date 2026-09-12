@@ -64,6 +64,11 @@ def composite_momentum(closes: pd.Series, params: StrategyParams) -> tuple[float
     return comp * r2, annualise(float(slope), params.trading_days_yr), float(r2)
 
 
+def _sma(closes: pd.Series, period: int) -> float:
+    """The mean of the last ``period`` closes; ``nan`` when there are fewer (ADR-024)."""
+    return float(closes.iloc[-period:].mean()) if len(closes) >= period else math.nan
+
+
 class SnapshotError(RuntimeError):
     """A snapshot could not be built; ``str(exc)`` is ``"<Type>: <message>"`` of the cause."""
 
@@ -82,7 +87,8 @@ class Snapshot:
     token: int
     rows: int
     last: float
-    ema100: float  # the trend EMA over the whole frame
+    ma100: float  # the trend filter's simple moving average, nan until trend_ma_period closes exist (ADR-024)
+    ma200: float  # the regime's simple moving average, nan until regime_ma_period closes exist
     atr: float
     avg_vol_20: float
     rolling_high: float  # the highest close over the trailing stop's window
@@ -99,14 +105,14 @@ class Snapshot:
         if rows == 0:
             return cls.empty(symbol, token)
         closes = frame["close"]
-        ema = float(pd.Series(closes).ewm(span=params.trend_ma_period, adjust=False).mean().iloc[-1])
         score, slope, r2 = composite_momentum(closes, params)
         return cls(
             symbol=symbol,
             token=token,
             rows=rows,
             last=float(closes.iloc[-1]),
-            ema100=ema,
+            ma100=_sma(closes, params.trend_ma_period),
+            ma200=_sma(closes, params.regime_ma_period),
             atr=atr(frame, params.atr_period),
             avg_vol_20=float(frame["volume"].iloc[-20:].mean()),
             rolling_high=float(closes.rolling(params.stop_window).max().iloc[-1]),
@@ -126,7 +132,8 @@ class Snapshot:
             token=token,
             rows=0,
             last=nan,
-            ema100=nan,
+            ma100=nan,
+            ma200=nan,
             atr=nan,
             avg_vol_20=nan,
             rolling_high=nan,

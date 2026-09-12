@@ -28,7 +28,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-021](ADR-021-snapshots-and-pure-rules.md) | One snapshot per symbol, and rules that are pure functions of it | Implemented | 2026-09-12 |
 | [ADR-022](ADR-022-trade-intents-one-executor-and-plan-mode.md) | Trade intents, one executor, bookkeeping in one place, and a plan mode | Implemented | 2026-09-12 |
 | [ADR-023](ADR-023-a-backtest-harness-over-the-candle-cache.md) | A backtest harness over the candle cache | Implemented | 2026-09-12 |
-| [ADR-024](ADR-024-simple-moving-averages-for-regime-and-trend.md) | Simple moving averages for the regime and trend filters | Proposed | 2026-09-12 |
+| [ADR-024](ADR-024-simple-moving-averages-for-regime-and-trend.md) | Simple moving averages for the regime and trend filters | Implemented | 2026-09-12 |
 | [ADR-025](ADR-025-the-gap-filter.md) | Exclude names with a daily move above 15 percent in the last 90 days | Proposed | 2026-09-12 |
 | [ADR-026](ADR-026-a-minimum-size-for-a-new-position.md) | A minimum size for a new position | Proposed | 2026-09-12 |
 | [ADR-027](ADR-027-resize-on-elapsed-time-not-iso-week-parity.md) | Resize on elapsed time since the last resize, not ISO-week parity | Proposed | 2026-09-12 |

@@ -181,7 +181,7 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
                 "rank": idx[d.symbol] + 1 if d.symbol in idx else None,
                 "pct_rank": d.pct_rank,
                 "close": d.ranked.close if d.ranked else None,
-                "ema100": d.ranked.ema100 if d.ranked else None,
+                "ma100": d.ranked.ma100 if d.ranked else None,
                 "stop_level": d.check.stop_level,
                 "reasons": ";".join(d.check.reasons),
                 "decision": decision,
@@ -441,8 +441,8 @@ def run(ctx: RunContext) -> None:
     # 5) Determine index regime (bull/bear)
     trend = regime(index_snapshot(ctx), strategy_params(ctx))
     bull = trend.bull
-    logger.info("Index %.2f vs 200-EMA %.2f → %s", trend.last, trend.ema200, "BULL" if bull else "BEAR")
-    art.record(regime={"index_close": trend.last, "ema200": trend.ema200, "bull": bull})
+    logger.info("Index %.2f vs 200-day MA %.2f → %s", trend.last, trend.ma200, "BULL" if bull else "BEAR")
+    art.record(regime={"index_close": trend.last, "ma200": trend.ma200, "bull": bull})
 
     # 6) Gather one snapshot per instrument and holding, evaluate, rank
     universe = get_universe(ctx, symbols)

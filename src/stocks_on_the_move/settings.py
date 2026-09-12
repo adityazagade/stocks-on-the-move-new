@@ -74,7 +74,9 @@ class Settings(BaseSettings):
     )
 
     # ── Universe and regime ──────────────────────────────────────────────
-    index_symbol: str = Field("NIFTY 50", description="Index whose 200-day EMA sets the bull or bear regime.")
+    index_symbol: str = Field(
+        "NIFTY 50", description="Index whose 200-day moving average sets the bull or bear regime."
+    )
     index_exchange: str = Field("NSE", description="Exchange segment of that index.")
     use_full_nifty_universe: bool = Field(
         False, description="1 = rank every NSE equity instead of the NIFTY 500 constituents."
