@@ -32,8 +32,8 @@ def read_table(path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def rank(symbol: str, *, close: float = 100.0, ema100: float = 90.0) -> RankItem:
-    return RankItem(symbol, 0.5, 0.3, 0.9, close, ema100)
+def rank(symbol: str, *, close: float = 100.0, ma100: float = 90.0) -> RankItem:
+    return RankItem(symbol, 0.5, 0.3, 0.9, close, ma100)
 
 
 def funded(ctx: RunContext, cash: float = 10_000.0, **ltps: float) -> RunContext:

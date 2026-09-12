@@ -23,8 +23,8 @@ def snapshot(symbol: str, closes, *, volume: int = 1_000_000, spread: float = 0.
     return Snapshot.from_candles(symbol, 1, frame, params)
 
 
-def rank_item(symbol: str, *, close: float = 100.0, ema100: float = 90.0) -> RankItem:
-    return RankItem(symbol, 0.5, 0.3, 0.9, close, ema100)
+def rank_item(symbol: str, *, close: float = 100.0, ma100: float = 90.0) -> RankItem:
+    return RankItem(symbol, 0.5, 0.3, 0.9, close, ma100)
 
 
 # ── parameters ───────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ def test_snapshot_fields_on_a_full_frame():
     snap = snapshot("AAA", trending_closes(150, daily=0.002))
     assert snap.rows == 150 and snap.enough_history and snap.error is None
     assert snap.last == pytest.approx(trending_closes(150, daily=0.002)[-1])
-    assert snap.last > snap.ema100 > 0
+    assert snap.last > snap.ma100 > 0
     assert snap.atr > 0 and snap.avg_vol_20 == 1_000_000
     assert snap.rolling_high == pytest.approx(snap.last)  # an uptrend's highest close is the last one
     assert snap.r2 == pytest.approx(1.0) and snap.score > 0
@@ -96,7 +96,7 @@ def test_regime_is_bull_above_the_long_ema_and_bear_below():
     up = snapshot("NIFTY 50", trending_closes(260, start=20_000.0, daily=0.001))
     down = snapshot("NIFTY 50", trending_closes(260, start=20_000.0, daily=-0.001))
     assert regime(up, P) == regime(up, P)  # deterministic
-    assert regime(up, P).bull is True and regime(up, P).last > regime(up, P).ema200
+    assert regime(up, P).bull is True and regime(up, P).last > regime(up, P).ma200
     assert regime(down, P).bull is False
     with pytest.raises(ValueError, match="not enough index candles"):
         regime(snapshot("NIFTY 50", trending_closes(150)), P)
@@ -109,8 +109,8 @@ def test_evaluate_names_the_rule_that_excluded():
     short = evaluate(snapshot("SHORT", trending_closes(10)), P)
     assert (short.reason, short.last) == ("history", None)
     falling = evaluate(snapshot("FALLING", trending_closes(150, daily=-0.003)), P)
-    assert falling.reason == "below_ema100" and falling.avg_vol_20 is None
-    assert falling.last is not None and falling.ema100 is not None and falling.last < falling.ema100
+    assert falling.reason == "below_ma100" and falling.avg_vol_20 is None
+    assert falling.last is not None and falling.ma100 is not None and falling.last < falling.ma100
     thin = evaluate(snapshot("THIN", trending_closes(150), volume=100), P)
     assert thin.reason == "volume" and thin.avg_vol_20 == 100 and thin.atr is None
     wild = evaluate(snapshot("WILD", trending_closes(150), spread=0.25), P)
@@ -157,11 +157,11 @@ def test_exit_check_lists_every_rule_that_fired():
     down = snapshot("DOWN", steady[:-10] + [c * 0.5 for c in steady[-10:]])
 
     assert exit_check(None, None, 0.1, P) == ExitCheck(("unranked",))
-    hold = exit_check(up, rank_item("UP", close=200.0, ema100=150.0), 0.1, P)
+    hold = exit_check(up, rank_item("UP", close=200.0, ma100=150.0), 0.1, P)
     assert hold.reasons == () and hold.sell is False and hold.stop_level is not None
-    both = exit_check(up, rank_item("UP", close=90.0, ema100=90.0), 0.9, P)
-    assert both.reasons == ("rank_cutoff", "below_ema100")
-    stopped = exit_check(down, rank_item("DOWN", close=200.0, ema100=150.0), 0.1, P)
+    both = exit_check(up, rank_item("UP", close=90.0, ma100=90.0), 0.9, P)
+    assert both.reasons == ("rank_cutoff", "below_ma100")
+    stopped = exit_check(down, rank_item("DOWN", close=200.0, ma100=150.0), 0.1, P)
     assert stopped.reasons == ("trailing_stop",) and stopped.sell is True
 
 

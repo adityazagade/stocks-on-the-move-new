@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from stocks_on_the_move.rules import RankItem
 
-UNIVERSE_COLUMNS = ["symbol", "token", "status", "reason", "last", "ema100", "avg_vol_20", "atr", "atr_pct"]
+UNIVERSE_COLUMNS = ["symbol", "token", "status", "reason", "last", "ma100", "avg_vol_20", "atr", "atr_pct"]
 
 
-RANKING_COLUMNS = ["rank", "symbol", "pct_rank", "score", "annual_slope", "r2", "close", "ema100", "held"]
+RANKING_COLUMNS = ["rank", "symbol", "pct_rank", "score", "annual_slope", "r2", "close", "ma100", "held"]
 
 
-EXIT_COLUMNS = ["symbol", "qty", "rank", "pct_rank", "close", "ema100", "stop_level", "reasons", "decision", "price"]
+EXIT_COLUMNS = ["symbol", "qty", "rank", "pct_rank", "close", "ma100", "stop_level", "reasons", "decision", "price"]
 
 
 SIZING_COLUMNS = ["symbol", "qty", "price", "atr", "risk_qty", "cap_qty", "target_qty", "delta", "action"]
@@ -40,7 +40,7 @@ def ranking_rows(ranks: Sequence[RankItem], held: Collection[str]) -> list[dict[
             "annual_slope": r.annual_slope,
             "r2": r.r2,
             "close": r.close,
-            "ema100": r.ema100,
+            "ma100": r.ma100,
             "held": r.symbol in held,
         }
         for i, r in enumerate(ranks)

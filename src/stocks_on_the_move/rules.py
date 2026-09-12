@@ -14,8 +14,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-import pandas as pd
-
 from stocks_on_the_move.indicators import Snapshot, SnapshotError
 from stocks_on_the_move.params import StrategyParams
 
@@ -31,7 +29,7 @@ class RankItem:
     annual_slope: float
     r2: float
     close: float
-    ema100: float
+    ma100: float
 
 
 # ── 1 ▸ index regime ─────────────────────────────────────────────────────
@@ -41,15 +39,14 @@ class Regime:
 
     bull: bool
     last: float
-    ema200: float
+    ma200: float
 
 
 def regime(index: Snapshot, params: StrategyParams) -> Regime:
-    """Bull when the index's last close is above its ``regime_ma_period`` EMA."""
+    """Bull when the index's last close is above its ``regime_ma_period``-day simple moving average (ADR-024)."""
     if index.rows < params.regime_ma_period:
-        raise ValueError("not enough index candles for EMA-200")
-    ema200 = float(pd.Series(index.closes).ewm(span=params.regime_ma_period, adjust=False).mean().iloc[-1])
-    return Regime(index.last > ema200, index.last, ema200)
+        raise ValueError("not enough index candles for the 200-day average")
+    return Regime(index.last > index.ma200, index.last, index.ma200)
 
 
 # ── 2 ▸ filter chain and ranking ─────────────────────────────────────────
@@ -62,7 +59,7 @@ class Evaluation:
     rank: RankItem | None = None
     reason: str | None = None
     last: float | None = None
-    ema100: float | None = None
+    ma100: float | None = None
     avg_vol_20: float | None = None
     atr: float | None = None
     atr_pct: float | None = None
@@ -74,7 +71,7 @@ class Evaluation:
             "status": "ranked" if self.rank is not None else "excluded",
             "reason": self.reason,
             "last": self.last,
-            "ema100": self.ema100,
+            "ma100": self.ma100,
             "avg_vol_20": self.avg_vol_20,
             "atr": self.atr,
             "atr_pct": self.atr_pct,
@@ -84,28 +81,28 @@ class Evaluation:
 def evaluate(snap: Snapshot, params: StrategyParams) -> Evaluation:
     """Run the filter chain on one snapshot and name the rule that stopped it, if any.
 
-    Order of the rules, unchanged: enough history, close above the trend EMA,
+    Order of the rules, unchanged: enough history, close above the trend average,
     20-day volume, ATR as a fraction of price, then the momentum score. A
     snapshot that could not be built is an ``error:<type>`` exclusion.
     """
     sym, tok = snap.symbol, snap.token
     last: float | None = None
-    ema100: float | None = None
+    ma100: float | None = None
     avg_vol_20: float | None = None
     atr_value: float | None = None
     atr_pct: float | None = None
 
     def verdict(*, rank: RankItem | None = None, reason: str | None = None) -> Evaluation:
-        return Evaluation(sym, tok, rank, reason, last, ema100, avg_vol_20, atr_value, atr_pct)
+        return Evaluation(sym, tok, rank, reason, last, ma100, avg_vol_20, atr_value, atr_pct)
 
     if snap.error is not None:
         return verdict(reason=f"error:{snap.error_type}")
     if not snap.enough_history:
         return verdict(reason="history")
-    ema100 = snap.ema100
+    ma100 = snap.ma100
     last = snap.last
-    if last <= ema100:
-        return verdict(reason="below_ema100")
+    if last <= ma100:
+        return verdict(reason="below_ma100")
     avg_vol_20 = snap.avg_vol_20
     if avg_vol_20 < params.min_volume:
         return verdict(reason="volume")
@@ -116,7 +113,7 @@ def evaluate(snap: Snapshot, params: StrategyParams) -> Evaluation:
     if math.isnan(snap.score):
         logger.warning("Not enough data to rank for %s", sym)
         return verdict(reason="insufficient_data")
-    return verdict(rank=RankItem(sym, float(snap.score), float(snap.annual_slope), float(snap.r2), last, ema100))
+    return verdict(rank=RankItem(sym, float(snap.score), float(snap.annual_slope), float(snap.r2), last, ma100))
 
 
 def rank(evaluations: Iterable[Evaluation]) -> list[RankItem]:
@@ -181,7 +178,7 @@ class ExitCheck:
 
 
 def exit_check(snap: Snapshot | None, rank: RankItem | None, pct_rank: float, params: StrategyParams) -> ExitCheck:
-    """Every exit rule, evaluated: ``unranked``, ``rank_cutoff``, ``below_ema100``, ``trailing_stop``.
+    """Every exit rule, evaluated: ``unranked``, ``rank_cutoff``, ``below_ma100``, ``trailing_stop``.
 
     All rules are checked so the artifact shows every reason; the decision is the
     OR of them. An unranked holding needs no snapshot.
@@ -191,8 +188,8 @@ def exit_check(snap: Snapshot | None, rank: RankItem | None, pct_rank: float, pa
     reasons = []
     if pct_rank > params.cut_off_pct:
         reasons.append("rank_cutoff")
-    if rank.close <= rank.ema100:
-        reasons.append("below_ema100")
+    if rank.close <= rank.ma100:
+        reasons.append("below_ma100")
     hit, stop_level = trailing_stop(snap, params)
     if hit:
         reasons.append("trailing_stop")

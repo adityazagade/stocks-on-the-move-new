@@ -11,10 +11,10 @@ and the things that catch newcomers. Setup and day-to-day commands are in
 A weekly momentum-rotation strategy for NSE equities, after Andreas Clenow's
 *Stocks on the Move*. Once a week it:
 
-1. checks whether the market is in a bull regime (NIFTY 50 above its 200-day EMA),
+1. checks whether the market is in a bull regime (NIFTY 50 above its 200-day moving average),
 2. ranks the NIFTY 500 by a momentum score,
 3. sells holdings that fell out of the top of the ranking, dropped below their
-   100-day EMA, or hit a trailing stop,
+   100-day moving average, or hit a trailing stop,
 4. every second week, resizes what is left toward an ATR-based risk target,
 5. if bullish and there is cash, buys down the ranking until it runs out of
    cash or slots.
@@ -49,7 +49,6 @@ Where this port deviates from the book, and it matters when you read the code:
   weights `WEIGHT_SHORT/MID/LONG`), shortened from the book's 21/63/126 before
   version control for a reason nobody recorded. Changing them again is a
   strategy ADR with the golden test as its evidence (ADR-016).
-- Regime and trend filters use EMAs where the book uses simple moving averages.
 
 ## 2. Your first hour
 
@@ -131,7 +130,7 @@ behind each step.
 | 3 | Token cache | `build_token_cache` | One `instruments("NSE")` call into `ctx.tokens`, then everything is a dict lookup |
 | 3.5 | Kill switch | `liquidate_all` | Sells everything, writes `OUT_FILE`, returns; with `PLAN_ONLY=1` it plans the liquidation and sells nothing |
 | 4 | Universe | `NseArchives.symbols`, or the `UniverseSource` on the context | Public CSVs from NSE archives, no auth, with a last-good copy under `CACHE_DIR` for the day NSE is down (ADR-020); tests inject a `StaticUniverse`. Empty universe aborts the run |
-| 5 | Regime | `index_snapshot`, `regime` | Index close vs 200-day EMA. Only gates buys, never sells |
+| 5 | Regime | `index_snapshot`, `regime` | Index close vs its 200-day simple moving average (ADR-024). Only gates buys, never sells |
 | 6 | Rank | `get_universe`, `rank_step` (`gather_snapshots`, `evaluate`, `rank`) | One candle read per instrument and holding into `ctx.snapshots`; filters then scores; see section 4 |
 | 7 | Exits | `prune_portfolio` (`decide_exits`, then `trade`) | Runs every week, bull or bear |
 | 8 | Raise cash | `raise_cash_if_needed` | Only when a withdrawal drove cash negative |
@@ -147,12 +146,12 @@ A stock is ranked only if it passes all of these, in order:
 1. Kite lists it as `instrument_type == "EQ"` in segment `NSE` and its base
    symbol is in the NIFTY 500 list.
 2. Enough daily candles: `max(MA_FILTER_100, LOOKBACK_LONG + 1, REG_LOOKBACK + 1)` rows.
-3. Last close above the 100-day EMA.
+3. Last close above the 100-day simple moving average (ADR-024).
 4. 20-day average volume at least `MIN_VOLUME`.
 5. ATR(20) no more than `MAX_ATR_PCT` of price.
 
 Every instrument's verdict, `ranked` or `excluded` with the rule that
-stopped it (`history`, `below_ema100`, `volume`, `atr_pct`,
+stopped it (`history`, `below_ma100`, `volume`, `atr_pct`,
 `insufficient_data`, `error:<type>`), is a row in the run's
 `universe.csv` (ADR-006), so a symbol disappearing from the ranking is a
 file open, not a re-run at DEBUG.
@@ -163,7 +162,7 @@ A holding is sold when any of these hold:
 
 - it is not in the ranking at all (it failed a filter above),
 - its percentile rank is worse than `CUT_OFF_PCT` (default top 20 %),
-- its close is at or below its 100-day EMA,
+- its close is at or below its 100-day moving average,
 - trailing stop: close is more than `EXIT_MULTIPLE` ATRs below the 40-day
   rolling maximum close.
 
@@ -436,7 +435,7 @@ and git now does that job.
 field on `Settings` in `settings.py`, with a description and, where a wrong
 value is dangerous, a range. List it in `EXAMPLE_SECTIONS` and regenerate
 `.env.example` with the command printed at the top of that file; a test
-fails if the two drift. Fixed strategy constants (lookbacks, EMA lengths)
+fails if the two drift. Fixed strategy constants (lookbacks, moving-average lengths)
 are the defaults of `StrategyParams` in `params.py`, which also carries the
 settings knobs a rule reads (ADR-021). Anything that changes the meaning of past
 ledger rows (fees, starting cash) deserves a note in the commit body.
@@ -452,7 +451,7 @@ and 019, which still refer to them by their old numbers; the last to close,
 ## 8. Glossary
 
 - **ATR** Average True Range, here a simple 20-day mean of the true range. Used for sizing and the trailing stop.
-- **EMA** Exponential moving average, `pandas.ewm(span=N, adjust=False)`.
+- **MA** Simple moving average: the mean of the last N closes (ADR-024; EMAs until then).
 - **ISO week parity** `ist_now().isocalendar().week % 2`; even weeks resize.
 - **LTP** Last traded price, from Kite's batched `ltp()` endpoint.
 - **Series** The NSE suffix on a tradingsymbol (`-BE`, `-BZ`). `EQ` is the normal rolling-settlement series and has no suffix.

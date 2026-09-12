@@ -1,8 +1,8 @@
 # ADR-024: Simple moving averages for the regime and trend filters
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
-- **Last Updated**: 2026-09-12
+- **Last Updated**: 2026-09-13
 - **Author**: Aditya Zagade
 
 ## Context
@@ -137,7 +137,23 @@ weighs what a finite exponential window gives it and no more.
 
 ## Implementation Status
 
-Proposed; nothing implemented.
+Implemented on 2026-09-13, one pull request, golden expected files
+regenerated and reviewed.
+
+- `Snapshot` carries `ma100` and `ma200`, each the mean of the last N
+  closes and `nan` with fewer; `regime` reads `ma200`, `evaluate` reads
+  `ma100`. The `ewm` calls are gone from the code.
+- Renamed throughout: `RankItem.ma100`, `Evaluation.ma100`, `Regime.ma200`,
+  the `ma100` column of `universe.csv`, `ranking.csv` and `exits.csv`, the
+  `ma200` key of `run.json`'s regime block, and the reasons `below_ma100` in
+  both tables. The index log line reads "200-day MA".
+- The golden diff, described in the commit body: the verdicts and ranking
+  order that moved between the exponential and the simple averages on the
+  fixtures' two dates.
+- The onboarding guide's deviation list loses its moving-average item; the
+  filter, exit and glossary entries name the simple average.
+- **Plan step 3**, the backtest of the two averages over the cached history,
+  waits for the owner's warm cache (ADR-023 step 6); its figures go in Notes.
 
 ## Notes
 

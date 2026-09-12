@@ -35,8 +35,8 @@ class StrategyParams:
     weight_mid: float = 0.3
     weight_long: float = 0.1
     reg_lookback: int = 90
-    trend_ma_period: int = 100  # a stock must close above this EMA to be ranked
-    regime_ma_period: int = 200  # the index must close above this EMA for buys
+    trend_ma_period: int = 100  # a stock must close above this simple moving average to be ranked (ADR-024)
+    regime_ma_period: int = 200  # the index must close above this simple moving average for buys
     trading_days_yr: int = 250
     min_shares: int = 1
 

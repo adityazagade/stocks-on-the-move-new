@@ -35,8 +35,8 @@ def ledger_rows(path: str) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def rank(symbol: str, *, close: float = 100.0, ema100: float = 90.0) -> RankItem:
-    return RankItem(symbol, 0.5, 0.3, 0.9, close, ema100)
+def rank(symbol: str, *, close: float = 100.0, ma100: float = 90.0) -> RankItem:
+    return RankItem(symbol, 0.5, 0.3, 0.9, close, ma100)
 
 
 def booked(fill: Fill | None) -> float:
@@ -364,7 +364,7 @@ def test_prune_writes_a_verdict_per_holding(make_context):
     build_token_cache(ctx)
     ctx.portfolio.positions = {"KEEP": 5, "DROP": 3}
 
-    prune_portfolio(ctx, [rank("KEEP", close=120.0, ema100=100.0)])
+    prune_portfolio(ctx, [rank("KEEP", close=120.0, ma100=100.0)])
 
     rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "exits.csv")}
     assert (rows["KEEP"]["decision"], rows["KEEP"]["reasons"], rows["KEEP"]["rank"]) == ("HOLD", "", "1")
@@ -501,7 +501,7 @@ def test_prune_keeps_a_holding_it_cannot_price(make_context, caplog):
     cash_before = ctx.portfolio.cash
 
     with caplog.at_level(logging.WARNING, logger=LOG):
-        prune_portfolio(ctx, [rank("KEEP", close=120.0, ema100=100.0)])
+        prune_portfolio(ctx, [rank("KEEP", close=120.0, ma100=100.0)])
 
     assert ctx.portfolio.positions == {"KEEP": 5, "GHOST": 3}
     assert ctx.portfolio.sold == set()
