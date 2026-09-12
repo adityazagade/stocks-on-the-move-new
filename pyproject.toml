@@ -13,7 +13,7 @@ dependencies = [
     "numpy>=2.0,<3",
     # pandas 3.x changes copy-on-write and string-dtype defaults; stay on 2.x
     # until the strategy math has been re-validated against it.
-    "pandas>=2.2,<3",
+    "pandas>=2.2,<4",
     "pydantic-settings>=2.15,<3",
 ]
 
