@@ -369,7 +369,11 @@ def test_prune_writes_a_verdict_per_holding(make_context):
     rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "exits.csv")}
     assert (rows["KEEP"]["decision"], rows["KEEP"]["reasons"], rows["KEEP"]["rank"]) == ("HOLD", "", "1")
     assert rows["KEEP"]["stop_level"] != "" and rows["KEEP"]["price"] == ""
-    assert (rows["DROP"]["decision"], rows["DROP"]["reasons"], rows["DROP"]["rank"]) == ("SELL", "unranked", "")
+    assert (rows["DROP"]["decision"], rows["DROP"]["reasons"], rows["DROP"]["rank"]) == (
+        "SELL",
+        "unranked:not_in_universe",  # it passes every filter; it is simply not in the ranking it was given (ADR-025)
+        "",
+    )
     assert float(rows["DROP"]["price"]) == pytest.approx(broker.ltps["NSE:DROP"])
 
     prune_portfolio(ctx, [])
@@ -510,10 +514,10 @@ def test_prune_keeps_a_holding_it_cannot_price(make_context, caplog):
     rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "exits.csv")}
     assert (rows["GHOST"]["decision"], rows["GHOST"]["reasons"], rows["GHOST"]["price"]) == (
         "SKIP:no_price",
-        "unranked",
+        "unranked:error:KeyError",  # no instrument, so no snapshot: the cause is the lookup that failed (ADR-025)
         "",
     )
-    assert "GHOST: exit wanted (unranked) but no price came back" in caplog.text
+    assert "GHOST: exit wanted (unranked:error:KeyError) but no price came back" in caplog.text
 
 
 def test_resize_leaves_the_quantity_when_the_sell_down_has_no_price(make_context):

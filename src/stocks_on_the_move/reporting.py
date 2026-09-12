@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from stocks_on_the_move.rules import RankItem
 
-UNIVERSE_COLUMNS = ["symbol", "token", "status", "reason", "last", "ma100", "avg_vol_20", "atr", "atr_pct"]
+UNIVERSE_COLUMNS = ["symbol", "token", "status", "reason", "last", "ma100", "avg_vol_20", "atr", "atr_pct", "max_gap"]
 
 
 RANKING_COLUMNS = ["rank", "symbol", "pct_rank", "score", "annual_slope", "r2", "close", "ma100", "held"]

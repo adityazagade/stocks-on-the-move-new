@@ -149,9 +149,11 @@ A stock is ranked only if it passes all of these, in order:
 3. Last close above the 100-day simple moving average (ADR-024).
 4. 20-day average volume at least `MIN_VOLUME`.
 5. ATR(20) no more than `MAX_ATR_PCT` of price.
+6. No single-day close-to-close move of `MAX_GAP_PCT` (default 15 %) or more
+   in the last 90 trading days (ADR-025); `1` disables the rule.
 
 Every instrument's verdict, `ranked` or `excluded` with the rule that
-stopped it (`history`, `below_ma100`, `volume`, `atr_pct`,
+stopped it (`history`, `below_ma100`, `volume`, `atr_pct`, `gap`,
 `insufficient_data`, `error:<type>`), is a row in the run's
 `universe.csv` (ADR-006), so a symbol disappearing from the ranking is a
 file open, not a re-run at DEBUG.
@@ -160,7 +162,8 @@ file open, not a re-run at DEBUG.
 
 A holding is sold when any of these hold:
 
-- it is not in the ranking at all (it failed a filter above),
+- it is not in the ranking at all (it failed a filter above, or left the
+  index); `exits.csv` says which as `unranked:<reason>` (ADR-025),
 - its percentile rank is worse than `CUT_OFF_PCT` (default top 20 %),
 - its close is at or below its 100-day moving average,
 - trailing stop: close is more than `EXIT_MULTIPLE` ATRs below the 40-day

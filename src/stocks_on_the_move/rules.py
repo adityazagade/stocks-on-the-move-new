@@ -63,6 +63,7 @@ class Evaluation:
     avg_vol_20: float | None = None
     atr: float | None = None
     atr_pct: float | None = None
+    max_gap: float | None = None
 
     def row(self) -> dict[str, Any]:
         return {
@@ -75,14 +76,16 @@ class Evaluation:
             "avg_vol_20": self.avg_vol_20,
             "atr": self.atr,
             "atr_pct": self.atr_pct,
+            "max_gap": self.max_gap,
         }
 
 
 def evaluate(snap: Snapshot, params: StrategyParams) -> Evaluation:
     """Run the filter chain on one snapshot and name the rule that stopped it, if any.
 
-    Order of the rules, unchanged: enough history, close above the trend average,
-    20-day volume, ATR as a fraction of price, then the momentum score. A
+    Order of the rules: enough history, close above the trend average, 20-day
+    volume, ATR as a fraction of price, the gap filter (ADR-025), then the
+    momentum score. A
     snapshot that could not be built is an ``error:<type>`` exclusion.
     """
     sym, tok = snap.symbol, snap.token
@@ -91,9 +94,10 @@ def evaluate(snap: Snapshot, params: StrategyParams) -> Evaluation:
     avg_vol_20: float | None = None
     atr_value: float | None = None
     atr_pct: float | None = None
+    max_gap: float | None = None
 
     def verdict(*, rank: RankItem | None = None, reason: str | None = None) -> Evaluation:
-        return Evaluation(sym, tok, rank, reason, last, ma100, avg_vol_20, atr_value, atr_pct)
+        return Evaluation(sym, tok, rank, reason, last, ma100, avg_vol_20, atr_value, atr_pct, max_gap)
 
     if snap.error is not None:
         return verdict(reason=f"error:{snap.error_type}")
@@ -110,6 +114,9 @@ def evaluate(snap: Snapshot, params: StrategyParams) -> Evaluation:
     atr_pct = atr_value / last if last > 0 else math.nan
     if math.isnan(atr_value) or (last > 0 and atr_value / last > params.max_atr_pct):
         return verdict(reason="atr_pct")
+    max_gap = snap.max_gap
+    if not math.isnan(max_gap) and max_gap >= params.max_gap_pct:
+        return verdict(reason="gap")
     if math.isnan(snap.score):
         logger.warning("Not enough data to rank for %s", sym)
         return verdict(reason="insufficient_data")
@@ -177,14 +184,22 @@ class ExitCheck:
         return bool(self.reasons)
 
 
-def exit_check(snap: Snapshot | None, rank: RankItem | None, pct_rank: float, params: StrategyParams) -> ExitCheck:
+def exit_check(
+    snap: Snapshot | None,
+    rank: RankItem | None,
+    pct_rank: float,
+    params: StrategyParams,
+    *,
+    unranked_cause: str | None = None,
+) -> ExitCheck:
     """Every exit rule, evaluated: ``unranked``, ``rank_cutoff``, ``below_ma100``, ``trailing_stop``.
 
     All rules are checked so the artifact shows every reason; the decision is the
-    OR of them. An unranked holding needs no snapshot.
+    OR of them. An unranked holding needs no snapshot; when the caller knows why
+    it was excluded, the reason reads ``unranked:<cause>`` (ADR-025).
     """
     if rank is None:
-        return ExitCheck(("unranked",))
+        return ExitCheck((f"unranked:{unranked_cause}" if unranked_cause else "unranked",))
     reasons = []
     if pct_rank > params.cut_off_pct:
         reasons.append("rank_cutoff")

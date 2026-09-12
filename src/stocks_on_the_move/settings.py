@@ -102,6 +102,15 @@ class Settings(BaseSettings):
     )
     min_volume: int = Field(10_000, ge=0, description="Minimum 20-day average volume for a name to be ranked.")
     max_atr_pct: float = Field(0.10, gt=0, description="Skip names whose ATR exceeds this fraction of their price.")
+    max_gap_pct: float = Field(
+        0.15,
+        ge=0,
+        le=1,
+        description=(
+            "Skip, and exit, names whose largest one-day close-to-close move in the last 90 trading days is at "
+            "least this fraction (ADR-025). 1 disables the rule."
+        ),
+    )
 
     # ── Scheduling ───────────────────────────────────────────────────────
     trading_weekday: int = Field(
@@ -236,6 +245,7 @@ EXAMPLE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "exit_multiple",
             "min_volume",
             "max_atr_pct",
+            "max_gap_pct",
         ),
     ),
     ("Scheduling", ("trading_weekday",)),

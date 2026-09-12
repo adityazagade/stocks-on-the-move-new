@@ -1,8 +1,8 @@
 # ADR-025: Exclude names with a daily move above 15 percent in the last 90 days
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
-- **Last Updated**: 2026-09-12
+- **Last Updated**: 2026-09-13
 - **Author**: Aditya Zagade
 
 ## Context
@@ -129,4 +129,25 @@ Divide the score by one plus the largest gap, or similar.
 
 ## Implementation Status
 
-Proposed; nothing implemented.
+Implemented on 2026-09-13, one pull request, golden expected files
+regenerated and reviewed.
+
+- `MAX_GAP_PCT` (default 0.15, 0 to 1) beside `MAX_ATR_PCT` in the sizing
+  and risk settings, on `StrategyParams` as `max_gap_pct` with
+  `gap_lookback = 90`. `.env.example` regenerated.
+- `Snapshot.max_gap` is the largest absolute close-to-close return over the
+  last 90 returns, `nan` with fewer than two closes. `evaluate` checks it
+  after the ATR rule with reason `gap`; `universe.csv` gains the `max_gap`
+  column; `Evaluation` carries it.
+- `exit_check` takes an `unranked_cause`; `decide_exits` supplies it by
+  evaluating the held name's snapshot, so `exits.csv` reads
+  `unranked:gap`, `unranked:below_ma100`, `unranked:volume`,
+  `unranked:not_in_universe` for a name that passes every filter but left
+  the index, or `unranked:error:<type>` for a name with no instrument. A
+  holding with no snapshot at all still reads `unranked`.
+- Tests: the gap measurement on a steady series, a 20 percent jump inside
+  and outside the window, the `gap` verdict and its place after the ATR
+  rule, the rule disabled at 1, and the `unranked:<cause>` form.
+- The golden diff is described in the commit body.
+- **Plan step 3**, with and without the rule over the cached history, waits
+  for the owner's warm cache (ADR-023 step 6).

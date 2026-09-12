@@ -142,7 +142,10 @@ def decide_exits(
         ranked = rmap.get(sym)
         pct = (idx[sym] + 1) / total if sym in idx else 1.0
         snap = snapshots.get(sym)
-        check = exit_check(snap, ranked, pct, params)
+        cause = None
+        if ranked is None and snap is not None:  # say which filter dropped a held name (ADR-025)
+            cause = evaluate(snap, params).reason or "not_in_universe"
+        check = exit_check(snap, ranked, pct, params, unranked_cause=cause)
         intent = None
         if check.sell:
             intent = TradeIntent(sym, "SELL", qty, "exit:" + ";".join(check.reasons), _reference(snap))
