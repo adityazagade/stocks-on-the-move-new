@@ -24,19 +24,13 @@ quantity and the broker's average price are what get booked.
 
 from __future__ import annotations
 
-import csv
 import logging
 import math
-import os
-import time
 from collections import namedtuple
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
-from datetime import datetime
+from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
-from zoneinfo import ZoneInfo
 
-import numpy as np
 import pandas as pd
 
 from stocks_on_the_move import kite_auth
@@ -52,60 +46,34 @@ from stocks_on_the_move.broker import (
     Side,
 )
 from stocks_on_the_move.candles import CandleStore
+from stocks_on_the_move.context import (
+    Fill,
+    RunContext,
+    build_token_cache,
+    filled_qty,
+    ist_now,
+    token_of,
+)
+from stocks_on_the_move.indicators import (
+    LOOKBACK_LONG,
+    MA_FILTER_100,
+    MA_PERIOD_200,
+    MIN_HISTORY,
+    MIN_SHARES,
+    _composite_momentum,
+    atr,
+)
+from stocks_on_the_move.ledger import TRADE_COLUMNS, init_cash_balance, read_portfolio, record_trade, write_portfolio
 from stocks_on_the_move.logging_setup import configure_logging
 from stocks_on_the_move.settings import Settings, SettingsError
+from stocks_on_the_move.universe import NO_MARKET_SERIES, get_universe, nse_universe_symbols, series_of
 
-# ── strategy constants ───────────────────────────────────────────────────
-# Fixed by the strategy, not configurable. Every environment knob is a field of
-# settings.Settings (ADR-007), reached through the RunContext.
-MIN_SHARES = 1
-
-# scoring & filters
-MA_PERIOD_200 = 200
-MA_FILTER_100: int = 100
-# Momentum lookbacks in trading days and their weights in the composite score (ADR-016).
-# Shortened from the book's 21/63/126 before version control, for a reason nobody recorded;
-# changing them again is a strategy ADR with the golden test (ADR-009) as its evidence.
-LOOKBACK_SHORT = 5
-LOOKBACK_MID = 15
-LOOKBACK_LONG = 45
-WEIGHT_SHORT = 0.6
-WEIGHT_MID = 0.3
-WEIGHT_LONG = 0.1
-REG_LOOKBACK = 90
-
-TRADING_DAYS_YR = 250
-
-# recognised NSE equity series codes
-SERIES_CODES: set[str] = {
-    "EQ",
-    "BE",
-    "BL",
-    "BZ",
-    "BT",
-    "IL",
-    "IQ",
-    "SM",
-    "ST",
-    "GC",
-    "GS",
-    # debt / partly-paid / rights etc.
-    "PP",
-    "RE",
-    "WD",
-    "N1",
-    "N2",
-    "N3",
-}
-NO_MARKET_SERIES = {"BE", "BZ", "BT", "IL", "IQ", "SM", "ST"}
-
-# Per-run artifact tables (ADR-006); the trade columns are also the trades ledger's header
+# ── per-run artifact tables (ADR-006) ────────────────────────────────────
 UNIVERSE_COLUMNS = ["symbol", "token", "status", "reason", "last", "ema100", "avg_vol_20", "atr", "atr_pct"]
 RANKING_COLUMNS = ["rank", "symbol", "pct_rank", "score", "annual_slope", "r2", "close", "ema100", "held"]
 EXIT_COLUMNS = ["symbol", "qty", "rank", "pct_rank", "close", "ema100", "stop_level", "reasons", "decision", "price"]
 SIZING_COLUMNS = ["symbol", "qty", "price", "atr", "risk_qty", "cap_qty", "target_qty", "delta", "action"]
 CANDIDATE_COLUMNS = ["rank", "symbol", "pct_rank", "decision", "qty", "est_cost", "cash_after"]
-TRADE_COLUMNS = ["timestamp", "side", "symbol", "qty", "price", "fees_pct", "slippage_pct", "cash_delta"]
 ORDER_COLUMNS = [  # every order this run sent and what the broker did with it (ADR-019)
     "order_id",
     "symbol",
@@ -120,15 +88,6 @@ ORDER_COLUMNS = [  # every order this run sent and what the broker did with it (
     "polls",
     "waited_s",
 ]
-
-# Timezone: run scheduling and biweekly parity in IST
-IST = ZoneInfo("Asia/Kolkata")
-
-
-def ist_now() -> datetime:
-    """Convenience: current time in IST."""
-    return datetime.now(IST)
-
 
 logger = logging.getLogger(__name__)
 
@@ -146,241 +105,12 @@ RankItem = namedtuple(
 )
 
 
-@dataclass(frozen=True)
-class Fill:
-    """What the broker did with one order (ADR-019).
-
-    ``filled`` is what the account actually gained or lost, and ``price`` the
-    broker's average for it. ``filled`` below ``requested`` is a partial fill;
-    zero means the order ended without a trade. ``safe_buy`` and ``safe_sell``
-    return ``None`` instead when nothing was sent at all.
-    """
-
-    symbol: str
-    side: Side
-    order_id: str
-    status: str
-    requested: int
-    filled: int
-    price: float
-
-    @property
-    def partial(self) -> bool:
-        return 0 < self.filled < self.requested
-
-
-def filled_qty(fill: Fill | None) -> int:
-    """The shares a trade attempt actually moved: zero for nothing sent and for nothing filled."""
-    return 0 if fill is None else fill.filled
-
-
-@dataclass
-class Portfolio:
-    """Positions, the cash reconstructed from the ledgers, and the names sold this run."""
-
-    positions: dict[str, int] = field(default_factory=dict)
-    cash: float = 0.0
-    sold: set[str] = field(default_factory=set)
-    trades: list[dict[str, Any]] = field(default_factory=list)  # the rows appended to the ledger this run
-    orders: list[dict[str, Any]] = field(default_factory=list)  # every order sent this run (ADR-019)
-
-
-@dataclass
-class RunContext:
-    """Everything a run needs, assembled once by ``main()`` (ADR-008).
-
-    ``paper`` only labels the trade log lines; paper mode itself is the choice
-    of a ``PaperBroker`` as ``broker``. ``universe`` supplies the base symbols
-    the strategy may hold; ``None`` means the NSE archives, per settings.
-    ``artifacts`` receives every table the run writes (ADR-006); the default
-    writes nothing. ``sleep`` is what the wait for a fill sleeps with (ADR-019);
-    tests pass a no-op.
-    """
-
-    settings: Settings
-    broker: Broker
-    candles: CandleStore
-    now: Callable[[], datetime] = ist_now
-    paper: bool = False
-    portfolio: Portfolio = field(default_factory=Portfolio)
-    tokens: dict[str, int] = field(default_factory=dict)  # "EXCH:SYMBOL" -> instrument_token
-    universe: Callable[[], set[str]] | None = None
-    artifacts: Artifacts = field(default_factory=NoArtifacts)
-    sleep: Callable[[float], None] = time.sleep
-
-
 # ═════════════════════════════════════════════════════════════════════════
 # I/O helpers
 # ═════════════════════════════════════════════════════════════════════════
-def read_portfolio(path: str) -> dict[str, int]:
-    """Read SYMBOL,QUANTITY rows from CSV into a dict."""
-    pf: dict[str, int] = {}
-    if os.path.isfile(path):
-        with open(path, newline="") as f:
-            for sym, qty in csv.reader(f):
-                try:
-                    pf[sym.strip().upper()] = int(qty)
-                except ValueError:
-                    logger.warning("Invalid line in %s: %s,%s", path, sym, qty)
-    logger.info("Portfolio loaded – %d positions", len(pf))
-    return pf
-
-
-def write_portfolio(path: str, pf: dict[str, int]) -> None:
-    """Write the portfolio dict back to CSV (sorted for determinism)."""
-    with open(path, "w", newline="") as f:
-        csv.writer(f).writerows(sorted(pf.items()))
-    logger.info("Portfolio written → %s (%d lines)", path, len(pf))
-
-
-# Ledgers ------------------------------------------------------------------
-def _ensure_csv(path: str, header: list[str]) -> None:
-    if not os.path.isfile(path) or os.path.getsize(path) == 0:
-        with open(path, "w", newline="") as f:
-            csv.writer(f).writerow(header)
-
-
-def _append_row(path: str, row: Sequence[Any]) -> None:
-    with open(path, "a", newline="") as f:
-        csv.writer(f).writerow(row)
-
-
-def append_env_cashflow_if_any(ctx: RunContext) -> None:
-    """If ENV_CASHFLOW!=0, append a dated row to cash ledger for today."""
-    s = ctx.settings
-    if abs(s.env_cashflow) < 1e-9:
-        return
-    _ensure_csv(s.cash_ledger_file, ["date", "amount", "note"])
-    _append_row(s.cash_ledger_file, [ctx.now().date().isoformat(), f"{s.env_cashflow:.2f}", s.cashflow_note])
-    logger.info("Applied ENV_CASHFLOW: %+,.2f (%s)", s.env_cashflow, s.cashflow_note)
-
-
-def cash_from_cash_ledger(path: str) -> float:
-    """Sum deposits/withdrawals from cash ledger."""
-    if not os.path.isfile(path):
-        return 0.0
-    total = 0.0
-    with open(path, newline="") as f:
-        for row in csv.DictReader(f):
-            try:
-                total += float(row.get("amount", "0").strip())
-            except Exception:
-                continue
-    return total
-
-
-def trades_cash_delta(path: str) -> float:
-    """Sum cash impact from the trades ledger (already net of fees/slippage)."""
-    if not os.path.isfile(path):
-        return 0.0
-    total = 0.0
-    with open(path, newline="") as f:
-        for row in csv.DictReader(f):
-            try:
-                total += float(row.get("cash_delta", "0").strip())
-            except Exception:
-                continue
-    return total
-
-
-def init_cash_balance(ctx: RunContext) -> float:
-    """Reconstruct the cash for this run from the ledgers and store it on the portfolio."""
-    s = ctx.settings
-    _ensure_csv(s.cash_ledger_file, ["date", "amount", "note"])
-    _ensure_csv(s.trades_ledger_file, TRADE_COLUMNS)
-    append_env_cashflow_if_any(ctx)
-    ledger = cash_from_cash_ledger(s.cash_ledger_file)
-    trades = trades_cash_delta(s.trades_ledger_file)
-    ctx.portfolio.cash = s.starting_cash + ledger + trades
-    logger.info(
-        "Cash reconstructed: START=%.2f, ledger=%.2f, trades=%.2f → CASH=%.2f",
-        s.starting_cash,
-        ledger,
-        trades,
-        ctx.portfolio.cash,
-    )
-    return ctx.portfolio.cash
-
-
-def record_trade(ctx: RunContext, side: str, symbol: str, qty: int, price: float) -> float:
-    """Write a trade to the trades ledger and update the portfolio's cash.
-
-    Returns the cash_delta applied (positive if cash increases).
-    """
-    s = ctx.settings
-    if qty <= 0 or price <= 0:
-        return 0.0
-    side = side.upper()
-    # A paper price is the price seen, so the slippage estimate applies; a live fill's average
-    # price already contains whatever slippage there was (ADR-019). Fees sit outside both.
-    slippage = s.slippage_pct if ctx.paper else 0.0
-    if side == "BUY":
-        cash_delta = -qty * price * (1.0 + s.fees_pct + slippage)
-    elif side == "SELL":
-        cash_delta = +qty * price * (1.0 - s.fees_pct - slippage)
-    else:
-        raise ValueError("side must be BUY or SELL")
-    values = [
-        ctx.now().isoformat(timespec="seconds"),
-        side,
-        symbol.upper(),
-        qty,
-        f"{price:.4f}",
-        f"{s.fees_pct:.6f}",
-        f"{slippage:.6f}",
-        f"{cash_delta:.2f}",
-    ]
-    _append_row(s.trades_ledger_file, values)
-    ctx.portfolio.trades.append(dict(zip(TRADE_COLUMNS, values, strict=True)))
-    ctx.artifacts.write_table("trades", TRADE_COLUMNS, ctx.portfolio.trades)
-    ctx.portfolio.cash += cash_delta
-    return cash_delta
-
-
 # ═════════════════════════════════════════════════════════════════════════
 # NSE helpers
 # ═════════════════════════════════════════════════════════════════════════
-def fetch_index_constituents(index: str, retries: int = 3) -> list[str]:
-    """Fetch current constituents for a given NSE index from NSE archives.
-
-    Returns upper-cased list of symbols; empty list if all retries fail.
-    """
-    url = f"https://archives.nseindia.com/content/indices/ind_{index.lower().replace(' ', '')}list.csv"
-    for attempt in range(1, retries + 1):
-        try:
-            df = pd.read_csv(url)
-            return df["Symbol"].str.upper().tolist()
-        except Exception as exc:
-            logger.warning("%s fetch failed (%s) – attempt %d/%d", index, exc, attempt, retries)
-            time.sleep(1)
-    logger.error("Giving up – empty universe filter")
-    return []
-
-
-def fetch_nifty_constituents(retries: int = 3) -> list[str]:
-    """Fetch full NIFTY constituents list from NSE archives."""
-    # https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv
-    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    for _attempt in range(1, retries + 1):
-        try:
-            df = pd.read_csv(url)
-            return df["SYMBOL"].str.upper().tolist()
-        except Exception as exc:
-            logger.error("NIFTY full constituents fetch failed (%s) – empty universe", exc)
-            time.sleep(1)
-    logger.error("Giving up – empty universe")
-    return []
-
-
-def nse_universe_symbols(settings: Settings) -> set[str]:
-    """Base symbols the strategy may hold: the NIFTY 500 constituents, or every NSE equity."""
-    if settings.use_full_nifty_universe:
-        symbols = set(fetch_nifty_constituents())
-        logger.info("Using full NIFTY universe: %d symbols", len(symbols))
-        return symbols
-    return set(fetch_index_constituents("NIFTY 500"))
-
-
 # ═════════════════════════════════════════════════════════════════════════
 # Kite helpers
 # ═════════════════════════════════════════════════════════════════════════
@@ -403,20 +133,6 @@ def authenticate(settings: Settings) -> KiteBroker:
 # ═════════════════════════════════════════════════════════════════════════
 # Market-data utilities
 # ═════════════════════════════════════════════════════════════════════════
-def atr(df: pd.DataFrame, period: int) -> float:
-    """Average True Range over *period* (simple mean), guarded for tiny frames."""
-    if df.empty:
-        return float("nan")
-    h, lo, c = df["high"], df["low"], df["close"]
-    prev_c = c.shift(1)
-    tr = pd.concat([(h - lo).abs(), (h - prev_c).abs(), (lo - prev_c).abs()], axis=1).max(axis=1)
-    tr = tr.iloc[1:]  # drop first NaN due to shift
-    if tr.empty:
-        return float("nan")
-    n = min(period, len(tr))
-    return float(tr.tail(n).mean())
-
-
 def ltp_map(broker: Broker, syms: Iterable[str]) -> dict[str, float]:
     """Batch-fetch LTP for NSE symbols. Returns {sym: last_price}."""
     syms = list(syms)
@@ -429,27 +145,6 @@ def ltp_map(broker: Broker, syms: Iterable[str]) -> dict[str, float]:
 # ═════════════════════════════════════════════════════════════════════════
 # Strategy building blocks
 # ═════════════════════════════════════════════════════════════════════════
-def build_token_cache(ctx: RunContext) -> None:
-    """Populate the context's token map from instruments("NSE") once per run."""
-    for inst in ctx.broker.instruments("NSE"):
-        ctx.tokens[f"NSE:{inst.tradingsymbol}"] = inst.token
-
-
-def token_of(ctx: RunContext, sym: str | None = None, exch: str | None = None) -> int:
-    """Resolve instrument_token for EXCH:SYMBOL (default: the regime index) from the token map."""
-    sym = ctx.settings.index_symbol if sym is None else sym
-    exch = ctx.settings.index_exchange if exch is None else exch
-    key = f"{exch}:{sym}"
-    if key in ctx.tokens:
-        return ctx.tokens[key]
-    # Fallback: scan the instruments of that exchange once if missing
-    for inst in ctx.broker.instruments(exch):
-        if inst.tradingsymbol == sym:
-            ctx.tokens[key] = inst.token
-            return inst.token
-    raise KeyError(f"Cannot resolve instrument_token for {key}")
-
-
 # ── 1 ▸ index regime ─────────────────────────────────────────────────────
 def index_trend(ctx: RunContext) -> tuple[bool, float, float]:
     """Return (is_bull, last_close, ema200) for the chosen index."""
@@ -463,43 +158,6 @@ def index_trend(ctx: RunContext) -> tuple[bool, float, float]:
 
 
 # ── 2 ▸ ranking  ─────────────────────────────────────────────────────────
-def annualise(slope_day: float) -> float:
-    """Convert daily log-price slope to annualised simple return."""
-    return math.exp(slope_day * TRADING_DAYS_YR) - 1.0
-
-
-def _composite_momentum(closes: pd.Series):
-    """Return (score, annual_slope, r2) or (nan, nan, nan) if insufficient data.
-
-    score = (0.6·R5 + 0.3·R15 + 0.1·R45) × R²(90d): a weighted sum of the simple
-    returns over LOOKBACK_SHORT, LOOKBACK_MID and LOOKBACK_LONG trading days, scaled
-    by the R² of a log-linear fit over REG_LOOKBACK days. annual_slope is that fit's
-    slope annualised.
-    """
-    need = max(LOOKBACK_LONG, REG_LOOKBACK) + 1
-    if len(closes) < need:
-        return math.nan, math.nan, math.nan
-
-    last = float(closes.iloc[-1])
-    r_short = (last / float(closes.iloc[-(LOOKBACK_SHORT + 1)])) - 1.0
-    r_mid = (last / float(closes.iloc[-(LOOKBACK_MID + 1)])) - 1.0
-    r_long = (last / float(closes.iloc[-(LOOKBACK_LONG + 1)])) - 1.0
-    comp = WEIGHT_SHORT * r_short + WEIGHT_MID * r_mid + WEIGHT_LONG * r_long
-
-    y = np.log(closes.iloc[-REG_LOOKBACK:])
-    x = np.arange(len(y), dtype=float)
-    slope, intercept = np.polyfit(x, y, 1)
-    y_hat = intercept + slope * x
-    ss_res = float(((y - y_hat) ** 2).sum())
-    ss_tot = float(((y - y.mean()) ** 2).sum())
-    r2 = 1 - ss_res / ss_tot if ss_tot else 0.0
-
-    return comp * r2, annualise(float(slope)), float(r2)
-
-
-MIN_HISTORY = max(MA_FILTER_100, LOOKBACK_LONG + 1, REG_LOOKBACK + 1)
-
-
 @dataclass(frozen=True)
 class Evaluation:
     """Why an instrument was ranked or excluded, with the metrics known at that point (universe.csv)."""
@@ -977,35 +635,6 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
             rows[sym]["action"] = "BUY:partial"
         pf.positions[sym] = pf.positions.get(sym, 0) + got
     ctx.artifacts.write_table("sizing", SIZING_COLUMNS, rows.values())
-
-
-def series_of(ts: str) -> str:
-    """Extract recognised 2-char NSE series code from a tradingsymbol."""
-    ts = ts.upper()
-    if "-" in ts:
-        _, maybe_series = ts.rsplit("-", 1)
-        if maybe_series in SERIES_CODES:
-            return maybe_series
-    return "EQ"
-
-
-def base_symbol(ts: str) -> str:
-    """Remove trailing '-XX' only when XX is a known NSE series code."""
-    ts = ts.upper()
-    if "-" in ts:
-        root, maybe_series = ts.rsplit("-", 1)
-        if maybe_series in SERIES_CODES:
-            return root
-    return ts
-
-
-def get_universe(ctx: RunContext, symbols: set[str]) -> list[Instrument]:
-    """Universe = NSE equity instruments whose base symbols are in *symbols*."""
-    return [
-        i
-        for i in ctx.broker.instruments("NSE")
-        if i.instrument_type == "EQ" and i.segment == "NSE" and base_symbol(i.tradingsymbol) in symbols
-    ]
 
 
 # ── 6 ▸ cash management for withdrawals ──────────────────────────────────
