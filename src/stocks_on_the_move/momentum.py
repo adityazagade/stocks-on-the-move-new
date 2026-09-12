@@ -1107,7 +1107,9 @@ def main() -> None:
         ctx = RunContext(
             settings=settings,
             broker=broker,
-            candles=CandleStore(broker, settings.cache_dir, sleep_sec=settings.candle_sleep_sec),
+            candles=CandleStore(
+                broker, settings.cache_dir, sleep_sec=settings.candle_sleep_sec, today=lambda: ist_now().date()
+            ),
             now=ist_now,
             paper=paper,
             artifacts=artifacts,

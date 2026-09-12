@@ -118,3 +118,11 @@ def test_slice_returns_only_the_requested_window(tmp_path, days):
     window_start = TODAY - timedelta(days=days + max(days // 2, 75))
     assert pd.to_datetime(df["date"]).dt.date.min() >= window_start
     assert pd.to_datetime(df["date"]).dt.date.max() == TODAY
+
+
+def test_default_today_is_the_ist_date(tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    s = CandleStore(FakeBroker(), tmp_path / "candles", sleep_sec=0.0)
+    assert s._today() == datetime.now(ZoneInfo("Asia/Kolkata")).date()

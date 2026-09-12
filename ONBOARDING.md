@@ -194,7 +194,8 @@ the best bid or ask from a `quote()` depth call. `series_of` and
 `base_symbol` do the parsing; both are unit tested.
 
 **All scheduling is IST.** Weekday checks and ISO-week parity use
-`ist_now()`. Candle dates are timezone-aware IST.
+`ist_now()`, the candle window ends on the IST date (ADR-018), and candle
+dates are timezone-aware IST.
 
 **Run artifacts are diagnostics, not state.** Every run past the weekday
 guard writes `runs/<date>/<time>-<mode>/` (ADR-006): the universe verdicts,
@@ -344,33 +345,16 @@ ledger rows (fees, starting cash) deserves a note in the commit body.
 
 ## 7. Known rough edges
 
-Things we know about and have not fixed. Good first tasks, in rough order of
-value. Each one needs an ADR before the fix; see `docs/adr/`.
+Things we know about and have not fixed. Each one needs an ADR before the
+fix; see `docs/adr/`. The six items this list carried in September 2026 are
+closed by ADR-005, 006, 008, 015, 016, 017 and 018, which still refer to
+them by their old numbers.
 
-1. **Stale names and docstring for the lookbacks.** See section 1. Renaming
-   the constants to `LOOKBACK_SHORT/MID/LONG` and fixing the
-   `_composite_momentum` docstring is a safe first commit.
-2. **`kite_call` returned `None` after exhausting retries.** Fixed by
-   ADR-008: `KiteBroker.call` raises `BrokerError` carrying the last message.
-3. **Fills are assumed.** Limit orders on `BE`/`BZ` names may not fill, but
-   the ledger and the portfolio snapshot are updated as if they did. In the
-   same family: `prune_portfolio`, `resize_positions`, `raise_cash_if_needed`
-   and `liquidate_all` adjust positions even when `safe_sell` returned `None`
-   because no price was available; `sizing.csv` shows those as
-   `SKIP:not_placed`.
-4. **`CandleStore` uses the machine's local date** (`datetime.now().date()`)
-   for the end of the window while everything else uses IST. Identical on a
-   machine set to IST, off by one day otherwise. ADR-008 made the date
-   injectable (`today=` on `CandleStore`); the fix is a one-line follow-up
-   ADR.
-5. **`authenticate` needed a TTY.** Addressed by ADR-005: the session is
-   cached until 06:00 IST and the login redirect is captured on a local
-   listener, so only the first run of the day needs a person. Unattended
-   scheduling itself is a separate, future ADR.
-6. **Broad `except Exception` in `rank_universe`** used to hide data problems
-   at DEBUG. Addressed by ADR-006 (every swallowed error is an `error:<type>`
-   row in `universe.csv`) and ADR-015 (the log line is a WARNING naming the
-   symbol and the exception type).
+1. **Limit-order fills are assumed.** A LIMIT order on a `BE`/`BZ` name may
+   never fill, but once the broker accepts it the ledger and the portfolio
+   snapshot are updated as if it did. Fixing this needs order-status
+   polling against the broker after the order, and a rule for what to do
+   with a partial fill.
 
 ## 8. Glossary
 

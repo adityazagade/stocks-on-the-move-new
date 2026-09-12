@@ -1,6 +1,6 @@
 # ADR-018: End the candle window on the IST date
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -73,4 +73,7 @@ are unaffected.
 
 ## Implementation Status
 
-Not started.
+Implemented on 2026-09-12. `CandleStore`'s default `today` is the IST date
+and `main()` passes `today=lambda: ist_now().date()`; a unit test checks the
+default. Plan step 2 passed: 192 tests, the golden test's expected files
+untouched (it injects its date).
