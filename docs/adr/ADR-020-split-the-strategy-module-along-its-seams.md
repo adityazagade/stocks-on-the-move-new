@@ -1,6 +1,6 @@
 # ADR-020: Split the strategy module along its seams
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -183,6 +183,17 @@ Accepted on 2026-09-12 by the owner's instruction to implement. In progress.
   out of `momentum.py` verbatim; the strategy module imports them back for
   what it still holds. Tests import the moved names from their new homes.
   219 tests pass, `ty` is clean, the golden expected files are untouched.
+- **Step 2, the middle** (#18): `rules.py` (`RankItem` as a frozen
+  dataclass, `index_trend`, the filter chain and ranking, the exit rules
+  and trailing stop, ATR sizing), `execution.py` (prices, placement, the
+  wait for a fill, `safe_buy`, `safe_sell`, `ltp_map`, `live_value`, the
+  cost helpers, `ORDER_COLUMNS`) and `reporting.py` (the five artifact
+  column lists, ahead of step 3 because the rules and the pipeline both
+  read them). `should_exit`, `rank_says_exit`, `_trailing_stop_hit` and
+  `target_shares` deleted; the buy loop calls `size_position` directly and
+  the tests call `_trailing_stop` and `exit_reasons`. The pipeline tests
+  listen to the package logger, since their lines now come from three
+  modules. Golden expected files untouched.
 
 ## Notes
 

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stocks_on_the_move import momentum as m
+from stocks_on_the_move.execution import gross_cost_for_buy, net_proceeds_for_sell
 from stocks_on_the_move.indicators import (
     LOOKBACK_LONG,
     REG_LOOKBACK,
@@ -62,8 +62,8 @@ def test_read_portfolio_missing_file_and_bad_rows(tmp_path):
 def test_buy_cost_and_sell_proceeds_bracket_the_notional(settings):
     price, qty = 100.0, 10
     friction = settings.fees_pct + settings.slippage_pct
-    assert m.gross_cost_for_buy(settings, price, qty) == pytest.approx(1000 * (1 + friction))
-    assert m.net_proceeds_for_sell(settings, price, qty) == pytest.approx(1000 * (1 - friction))
+    assert gross_cost_for_buy(settings, price, qty) == pytest.approx(1000 * (1 + friction))
+    assert net_proceeds_for_sell(settings, price, qty) == pytest.approx(1000 * (1 - friction))
 
 
 # ── indicators ───────────────────────────────────────────────────────────

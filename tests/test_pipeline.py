@@ -12,11 +12,22 @@ from fakes import EVEN_WEEK_WEDNESDAY, ODD_WEEK_WEDNESDAY, FakeBroker, make_cand
 from stocks_on_the_move import momentum as m
 from stocks_on_the_move.broker import Instrument, Order, Quote
 from stocks_on_the_move.context import Fill, build_token_cache, token_of
+from stocks_on_the_move.execution import ltp_map, safe_buy, safe_sell
 from stocks_on_the_move.ledger import TRADE_COLUMNS, init_cash_balance, read_portfolio, write_portfolio
+from stocks_on_the_move.reporting import EXIT_COLUMNS, SIZING_COLUMNS
+from stocks_on_the_move.rules import (
+    ExitCheck,
+    RankItem,
+    _trailing_stop,
+    evaluate_instrument,
+    exit_reasons,
+    rank_universe,
+    size_position,
+)
 
 TODAY = EVEN_WEEK_WEDNESDAY.date()
 NIFTY = Instrument(256265, "NIFTY 50", "NSE", "INDICES", "EQ")
-LOG = "stocks_on_the_move.momentum"
+LOG = "stocks_on_the_move"  # the package logger: the pipeline's lines come from several modules now
 
 
 def ledger_rows(path: str) -> list[dict]:
@@ -24,8 +35,8 @@ def ledger_rows(path: str) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def rank(symbol: str, *, close: float = 100.0, ema100: float = 90.0) -> m.RankItem:
-    return m.RankItem(symbol, 0.5, 0.3, 0.9, close, ema100)
+def rank(symbol: str, *, close: float = 100.0, ema100: float = 90.0) -> RankItem:
+    return RankItem(symbol, 0.5, 0.3, 0.9, close, ema100)
 
 
 def booked(fill: Fill | None) -> float:
@@ -39,8 +50,8 @@ def booked(fill: Fill | None) -> float:
 
 def test_ltp_map_strips_the_exchange_prefix(ctx):
     ctx.broker.ltps.update({"NSE:TCS": 100.0, "NSE:INFY": 50.0})
-    assert m.ltp_map(ctx.broker, ["TCS", "INFY", "NOPE"]) == {"TCS": 100.0, "INFY": 50.0}
-    assert m.ltp_map(ctx.broker, []) == {}
+    assert ltp_map(ctx.broker, ["TCS", "INFY", "NOPE"]) == {"TCS": 100.0, "INFY": 50.0}
+    assert ltp_map(ctx.broker, []) == {}
     assert not ctx.broker.calls[-1:] or ctx.broker.calls[-1][0] == "ltp"
 
 
@@ -63,7 +74,7 @@ def test_market_buy_books_the_trade_the_cash_and_the_ledger_row(ctx):
     ctx.broker.ltps["NSE:TCS"] = 100.0
     ctx.portfolio.cash = 10_000.0
 
-    assert booked(m.safe_buy(ctx, "TCS", 10)) == 100.0
+    assert booked(safe_buy(ctx, "TCS", 10)) == 100.0
 
     assert ctx.broker.orders == [Order("TCS", "BUY", 10, "MARKET")]
     friction = ctx.settings.fees_pct + ctx.settings.slippage_pct
@@ -78,7 +89,7 @@ def test_buy_is_refused_when_cash_is_short(ctx, caplog):
     ctx.broker.ltps["NSE:TCS"] = 100.0
     ctx.portfolio.cash = 500.0
     with caplog.at_level(logging.INFO, logger=LOG):
-        assert m.safe_buy(ctx, "TCS", 10) is None
+        assert safe_buy(ctx, "TCS", 10) is None
     assert ctx.broker.orders == []
     assert ctx.portfolio.cash == 500.0
     assert "Not enough cash" in caplog.text
@@ -88,7 +99,7 @@ def test_market_sell_credits_cash_net_of_friction(ctx):
     init_cash_balance(ctx)
     ctx.broker.ltps["NSE:TCS"] = 100.0
     ctx.portfolio.cash = 0.0
-    assert booked(m.safe_sell(ctx, "TCS", 10)) == 100.0
+    assert booked(safe_sell(ctx, "TCS", 10)) == 100.0
     assert ctx.broker.orders == [Order("TCS", "SELL", 10, "MARKET")]
     friction = ctx.settings.fees_pct + ctx.settings.slippage_pct
     assert ctx.portfolio.cash == pytest.approx(1_000 * (1 - friction))
@@ -99,9 +110,9 @@ def test_no_market_series_trade_with_limit_orders_at_the_top_of_the_book(ctx):
     ctx.broker.quotes["NSE:IDEA-BE"] = Quote(last_price=10.0, best_bid=9.9, best_ask=10.1)
     ctx.broker.quotes["NSE:THIN-BZ"] = Quote(last_price=5.0, best_bid=None, best_ask=None)
 
-    assert booked(m.safe_buy(ctx, "IDEA-BE", 100)) == 10.1
-    assert booked(m.safe_sell(ctx, "IDEA-BE", 100)) == 9.9
-    assert booked(m.safe_sell(ctx, "THIN-BZ", 10)) == 5.0  # empty book: last price
+    assert booked(safe_buy(ctx, "IDEA-BE", 100)) == 10.1
+    assert booked(safe_sell(ctx, "IDEA-BE", 100)) == 9.9
+    assert booked(safe_sell(ctx, "THIN-BZ", 10)) == 5.0  # empty book: last price
 
     assert ctx.broker.orders == [
         Order("IDEA-BE", "BUY", 100, "LIMIT", limit_price=10.1),
@@ -113,15 +124,15 @@ def test_no_market_series_trade_with_limit_orders_at_the_top_of_the_book(ctx):
 def test_a_trade_without_a_price_is_skipped_with_a_warning(ctx, caplog):
     init_cash_balance(ctx)
     with caplog.at_level(logging.WARNING, logger=LOG):
-        assert m.safe_buy(ctx, "GHOST", 5) is None
-        assert m.safe_sell(ctx, "GHOST", 5) is None
+        assert safe_buy(ctx, "GHOST", 5) is None
+        assert safe_sell(ctx, "GHOST", 5) is None
     assert ctx.broker.orders == []
     assert caplog.text.count("No price for GHOST") == 2
 
 
 def test_tiny_quantities_are_ignored(ctx):
-    assert m.safe_buy(ctx, "TCS", 0) is None
-    assert m.safe_sell(ctx, "TCS", 0) is None
+    assert safe_buy(ctx, "TCS", 0) is None
+    assert safe_sell(ctx, "TCS", 0) is None
     assert ctx.broker.calls == []
 
 
@@ -129,9 +140,9 @@ def test_trade_lines_keep_the_paper_label(ctx, caplog):
     init_cash_balance(ctx)
     ctx.broker.ltps["NSE:TCS"] = 100.0
     with caplog.at_level(logging.INFO, logger=LOG):
-        m.safe_buy(ctx, "TCS", 1)
+        safe_buy(ctx, "TCS", 1)
         ctx.paper = False
-        m.safe_sell(ctx, "TCS", 1)
+        safe_sell(ctx, "TCS", 1)
     assert "PAPER BUY TCS" in caplog.text
     assert "SELL TCS" in caplog.text and "PAPER SELL" not in caplog.text
 
@@ -139,20 +150,13 @@ def test_trade_lines_keep_the_paper_label(ctx, caplog):
 # ── exits ────────────────────────────────────────────────────────────────
 
 
-def test_rank_says_exit_rules(settings):
-    assert m.rank_says_exit(settings, None, 0.1) is True
-    assert m.rank_says_exit(settings, rank("AAA"), settings.cut_off_pct + 0.01) is True
-    assert m.rank_says_exit(settings, rank("AAA", close=90.0, ema100=90.0), 0.1) is True
-    assert m.rank_says_exit(settings, rank("AAA"), settings.cut_off_pct) is False
-
-
 def test_trailing_stop_fires_after_a_collapse_and_not_in_an_uptrend(ctx):
     steady = trending_closes(120, daily=0.001)
     ctx.broker.add_equity("UP", 1, steady, end=TODAY)
     ctx.broker.add_equity("DOWN", 2, steady[:-10] + [c * 0.5 for c in steady[-10:]], end=TODAY)
     build_token_cache(ctx)
-    assert m._trailing_stop_hit(ctx, "UP") is False
-    assert m._trailing_stop_hit(ctx, "DOWN") is True
+    assert _trailing_stop(ctx, "UP")[0] is False
+    assert _trailing_stop(ctx, "DOWN")[0] is True
 
 
 def test_prune_sells_unranked_holdings_and_skips_on_an_empty_ranking(make_context, caplog):
@@ -328,7 +332,7 @@ def test_evaluate_instrument_names_the_rule_that_excluded(ctx):
     by_symbol = {i.tradingsymbol: i for i in broker.instruments("NSE")}
 
     def verdict(sym):
-        return m.evaluate_instrument(ctx, by_symbol[sym])
+        return evaluate_instrument(ctx, by_symbol[sym])
 
     assert (verdict("SHORT").reason, verdict("SHORT").last) == ("history", None)
     falling = verdict("FALLING")
@@ -350,9 +354,9 @@ def test_evaluate_instrument_turns_a_thrown_error_into_a_reason(make_context):
     broker = BrokenBroker()
     broker.add_equity("X", 1, [1.0], end=TODAY)
     ctx = make_context(broker)
-    verdict = m.evaluate_instrument(ctx, broker.instruments("NSE")[0])
+    verdict = evaluate_instrument(ctx, broker.instruments("NSE")[0])
     assert verdict.reason == "error:RuntimeError"
-    assert m.rank_universe(ctx, broker.instruments("NSE")) == []
+    assert rank_universe(ctx, broker.instruments("NSE")) == []
 
 
 def test_exit_reasons_list_every_rule_that_fired(ctx):
@@ -361,12 +365,12 @@ def test_exit_reasons_list_every_rule_that_fired(ctx):
     ctx.broker.add_equity("DOWN", 2, steady[:-10] + [c * 0.5 for c in steady[-10:]], end=TODAY)
     build_token_cache(ctx)
 
-    assert m.exit_reasons(ctx, None, 0.1) == m.ExitCheck(("unranked",))
-    hold = m.exit_reasons(ctx, rank("UP", close=200.0, ema100=150.0), 0.1)
+    assert exit_reasons(ctx, None, 0.1) == ExitCheck(("unranked",))
+    hold = exit_reasons(ctx, rank("UP", close=200.0, ema100=150.0), 0.1)
     assert hold.reasons == () and hold.sell is False and hold.stop_level is not None
-    both = m.exit_reasons(ctx, rank("UP", close=90.0, ema100=90.0), 0.9)
+    both = exit_reasons(ctx, rank("UP", close=90.0, ema100=90.0), 0.9)
     assert both.reasons == ("rank_cutoff", "below_ema100")
-    stopped = m.exit_reasons(ctx, rank("DOWN", close=200.0, ema100=150.0), 0.1)
+    stopped = exit_reasons(ctx, rank("DOWN", close=200.0, ema100=150.0), 0.1)
     assert stopped.reasons == ("trailing_stop",) and stopped.sell is True
     assert stopped.stop_level > steady[-1] * 0.5  # the last close sits under the stop
 
@@ -374,19 +378,18 @@ def test_exit_reasons_list_every_rule_that_fired(ctx):
 def test_size_position_is_the_floor_of_the_smaller_quantity(ctx):
     ctx.broker.add_equity("AAA", 1, trending_closes(60, start=100.0), end=TODAY)
     build_token_cache(ctx)
-    size = m.size_position(ctx, "AAA", 100_000.0)
+    size = size_position(ctx, "AAA", 100_000.0)
     assert size.risk_qty == pytest.approx(100_000 * ctx.settings.risk_factor / size.atr)
     assert size.cap_qty == pytest.approx(100_000 * ctx.settings.max_weight / size.price)
     assert size.target_qty == int(min(size.risk_qty, size.cap_qty))
-    assert m.target_shares(ctx, "AAA", 100_000.0) == size.target_qty
 
 
 def test_record_trade_mirrors_the_ledger_into_trades_csv(make_context):
     ctx = make_context(artifacts=True)
     init_cash_balance(ctx)
     ctx.broker.ltps["NSE:TCS"] = 100.0
-    m.safe_buy(ctx, "TCS", 3)
-    m.safe_sell(ctx, "TCS", 1)
+    safe_buy(ctx, "TCS", 3)
+    safe_sell(ctx, "TCS", 1)
     artifact_rows = read_table(ctx.artifacts.path / "trades.csv")
     assert artifact_rows == ledger_rows(ctx.settings.trades_ledger_file)
     assert [r["side"] for r in artifact_rows] == ["BUY", "SELL"]
@@ -410,14 +413,14 @@ def test_prune_writes_a_verdict_per_holding(make_context):
     assert float(rows["DROP"]["price"]) == pytest.approx(broker.ltps["NSE:DROP"])
 
     m.prune_portfolio(ctx, [])
-    assert (ctx.artifacts.path / "exits.csv").read_text() == ",".join(m.EXIT_COLUMNS) + "\n"
+    assert (ctx.artifacts.path / "exits.csv").read_text() == ",".join(EXIT_COLUMNS) + "\n"
 
 
 def test_skipped_resize_leaves_a_header_and_a_flag(make_context):
     ctx = make_context(now=lambda: ODD_WEEK_WEDNESDAY, artifacts=True)
     ctx.portfolio.positions = {"AAA": 10}
     m.resize_positions(ctx, bull=True)
-    assert (ctx.artifacts.path / "sizing.csv").read_text() == ",".join(m.SIZING_COLUMNS) + "\n"
+    assert (ctx.artifacts.path / "sizing.csv").read_text() == ",".join(SIZING_COLUMNS) + "\n"
     assert json.loads((ctx.artifacts.path / "run.json").read_text())["resize_performed"] is False
 
 
@@ -487,8 +490,8 @@ def test_run_writes_the_whole_artifact_set(make_context, caplog):
         ("BBB", "BUY", "COMPLETE"),
     ]
     assert [o["filled_qty"] for o in orders] == [t["qty"] for t in read_table(path / "trades.csv")]
-    assert (path / "exits.csv").read_text() == ",".join(m.EXIT_COLUMNS) + "\n"  # no holdings to judge
-    assert (path / "sizing.csv").read_text() == ",".join(m.SIZING_COLUMNS) + "\n"  # nothing to resize
+    assert (path / "exits.csv").read_text() == ",".join(EXIT_COLUMNS) + "\n"  # no holdings to judge
+    assert (path / "sizing.csv").read_text() == ",".join(SIZING_COLUMNS) + "\n"  # nothing to resize
     assert (path / "portfolio_before.csv").read_text() == ""
     assert read_portfolio(str(path / "portfolio_after.csv")) == ctx.portfolio.positions
 
