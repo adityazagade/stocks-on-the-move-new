@@ -269,9 +269,43 @@ port (default `8765`):
 
 ## Implementation Status
 
-Not started.
+Code complete on 2026-09-12; awaiting plan step 2 and step 4 by the owner.
+
+- Plan step 1 and step 3 landed together in `src/stocks_on_the_move/kite_auth.py`
+  with `tests/test_kite_auth.py` (parser, 06:00 boundary, cache file
+  permissions, listener over loopback, wait loop, `authenticate()` against a
+  fake client). `momentum.authenticate()` delegates to it and passes
+  `kite_call` for the liveness check.
+- Step 2 (redirect URL in the developer console) is not done. Tier 2 ships
+  anyway because the refinement in Notes makes it harmless when the console
+  still points elsewhere: the paste works at the same time.
+- Step 4 validation is outstanding: two paper runs on the same day, the
+  second without a prompt; then a master logout from Kite Web followed by a
+  run that must detect the dead token and log in again. Status moves to
+  Implemented after that.
 
 ## Notes
 
 Open question for step 2: does the Kite developer console accept
 `http://127.0.0.1:8765/` as a redirect URL? The documentation is silent.
+
+Refinements made while implementing, all inside the decision above:
+
+- **Tiers 2 and 3 wait concurrently, not in sequence.** The listener and the
+  paste prompt are active at the same time, and whichever produces a request
+  token first wins. A strict sequence would cost five minutes whenever the
+  console's redirect URL does not point at the listener yet, and the wait
+  would end in a paste anyway. The deadline still bounds the whole wait.
+- **"Has a terminal" includes PyCharm's run console.** `sys.stdin.isatty()`
+  is False there because PyCharm feeds stdin through a pipe, yet a person is
+  typing. The check also accepts stdin when `PYCHARM_HOSTED` is set, which
+  PyCharm exports. Without this the owner's usual run configuration would
+  fail on the first login of the day.
+- **The liveness check tolerates a silent `kite_call`.** `kite_call` returns
+  `None` after exhausting retries (rough edge 2, ADR-008). A `None` profile
+  logs a WARNING and keeps the cached token; the next Kite call fails
+  clearly if the token is dead. Raising here would turn rate limiting into a
+  forced login that would hit the same limit.
+- **Logging discipline.** `SessionRecord` excludes the access token from its
+  `repr`, and the listener overrides `log_request` so the request line, whose
+  query string carries the request token, is never logged.

@@ -43,9 +43,13 @@ import pandas as pd
 from kiteconnect import KiteConnect
 from kiteconnect.exceptions import NetworkException
 
+from stocks_on_the_move import kite_auth
+
 # ── configuration ────────────────────────────────────────────────────────
 API_KEY = os.getenv("KITE_API_KEY", "YOUR_API_KEY")
 API_SECRET = os.getenv("KITE_API_SECRET", "YOUR_API_SECRET")
+# Session cache and login capture (ADR-005): KITE_SESSION_FILE, KITE_REDIRECT_PORT,
+# KITE_OPEN_BROWSER and KITE_FORGET_SESSION are read in kite_auth.py.
 
 INDEX_SYM = os.getenv("INDEX_SYMBOL", "NIFTY 50")
 INDEX_EXCH = os.getenv("INDEX_EXCHANGE", "NSE")
@@ -367,14 +371,8 @@ def fetch_nifty_constituents(retries: int = 3) -> list[str]:
 # Kite helpers
 # ═════════════════════════════════════════════════════════════════════════
 def authenticate() -> KiteConnect:
-    """Interactive Kite authentication: prints login URL and prompts for request-token."""
-    kite = KiteConnect(api_key=API_KEY)
-    print("Login URL:\n", kite.login_url())
-    rq = input("Paste request-token ➜ ").strip()
-    sess = kite.generate_session(rq, api_secret=API_SECRET)
-    kite.set_access_token(sess["access_token"])
-    logger.info("Kite session established.")
-    return kite
+    """A Kite session: cached from earlier today, captured from the login redirect, or pasted (ADR-005)."""
+    return kite_auth.authenticate(API_KEY, API_SECRET, call=kite_call)
 
 
 # ═════════════════════════════════════════════════════════════════════════

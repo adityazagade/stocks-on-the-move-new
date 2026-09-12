@@ -22,7 +22,7 @@ A weekly momentum-rotation strategy for NSE equities, after Andreas Clenow's
 Orders go through Zerodha Kite Connect. State lives in four CSV files in the
 working directory. There is no database, no scheduler and no UI. The whole
 strategy is one module, `src/stocks_on_the_move/momentum.py`, run top to
-bottom by `main()`.
+bottom by `main()`; the Kite login lives beside it in `kite_auth.py`.
 
 Where this port deviates from the book, and it matters when you read the code:
 
@@ -71,11 +71,17 @@ TRADING_WEEKDAY=$(( $(TZ=Asia/Kolkata date +%u) - 1 )) \
 Leave `CACHE_DIR` alone: the candle cache is plain market data, sharing it
 saves a few thousand API calls, and the code repairs it if it is stale.
 
-The run prints a Kite login URL. Open it, log in, and Kite redirects to the
-URL registered for your app with `request_token=...` in the query string.
-Paste that token at the prompt. Access tokens expire daily, so every run is
-interactive. Paper mode still needs this login because it pulls live prices
-and history.
+The first run of the day logs in to Kite (ADR-005). It prints the login URL,
+opens it in your browser, and listens on `http://127.0.0.1:8765/` for the
+redirect that Kite sends after you approve. For that to land, the redirect
+URL of your app in the Kite developer console must be exactly that address.
+If it is something else, paste the request token, or the whole redirected
+URL, at the prompt instead; both work. The access token is then cached in
+`~/.config/stocks-on-the-move/kite_session.json` (mode 0600) and reused
+until it dies at 06:00 IST, so a retry or a second paper run the same day
+needs no login. `KITE_FORGET_SESSION=1` discards the cache; the knobs are in
+`.env.example`. Paper mode still needs this login because it pulls live
+prices and history.
 
 A full run against the NIFTY 500 with a cold cache takes a while: the
 throttle holds Kite calls to `KITE_RPS` (default 2 per second) and sleeps
@@ -89,7 +95,7 @@ behind each step.
 | # | Step | Functions | Notes |
 | --- | --- | --- | --- |
 | 1 | Weekday guard | `ist_now` | Skipped when `KILL_SWITCH=1` |
-| 2 | Load state, log in | `read_portfolio`, `init_cash_balance`, `authenticate` | Cash is reconstructed from ledgers, never stored |
+| 2 | Load state, log in | `read_portfolio`, `init_cash_balance`, `authenticate` (delegates to `kite_auth`) | Cash is reconstructed from ledgers, never stored |
 | 3 | Token cache | `build_token_cache` | One `instruments("NSE")` call, then everything is a dict lookup |
 | 3.5 | Kill switch | `liquidate_all` | Sells everything, writes `OUT_FILE`, returns |
 | 4 | Universe | `fetch_index_constituents`, `fetch_nifty_constituents` | Public CSVs from NSE archives, no auth. Empty universe aborts the run |
@@ -218,7 +224,8 @@ rule sets E/W/F/I/UP/B/C4/SIM. `archive/` is excluded and must stay that way.
 The pre-commit hooks run ruff on every commit; `uv run pre-commit run
 --all-files` runs them by hand.
 
-**Tests.** `tests/test_momentum.py` covers the pure helpers: symbol parsing,
+**Tests.** `tests/test_kite_auth.py` covers the login module against a fake
+client. `tests/test_momentum.py` covers the pure helpers: symbol parsing,
 portfolio CSV round-trips, fee arithmetic, ATR and the momentum score.
 Nothing that takes a `KiteConnect` is tested. If you add such a test, pass a
 small fake object exposing the methods you need, for example an `ltp`
@@ -259,8 +266,11 @@ value. Each one needs an ADR before the fix; see `docs/adr/`.
 4. **`candles_df` uses the machine's local date** (`datetime.now().date()`)
    for the end of the window while everything else uses IST. Identical on a
    machine set to IST, off by one day otherwise.
-5. **`authenticate` needs a TTY.** The daily token handoff blocks unattended
-   runs from cron or launchd.
+5. **`authenticate` needed a TTY.** Addressed by ADR-005: the session is
+   cached until 06:00 IST and the login redirect is captured on a local
+   listener, so only the first run of the day needs a person. Stays on this
+   list until the validation runs in ADR-005's plan are done. Unattended
+   scheduling itself is a separate, future ADR.
 6. **Broad `except Exception` in `rank_universe`** logs at DEBUG, so data
    problems for individual symbols are invisible at the default log level.
 
