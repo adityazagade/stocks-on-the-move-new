@@ -69,6 +69,14 @@ def _sma(closes: pd.Series, period: int) -> float:
     return float(closes.iloc[-period:].mean()) if len(closes) >= period else math.nan
 
 
+def _max_gap(closes: pd.Series, lookback: int) -> float:
+    """The largest absolute close-to-close daily return over the last ``lookback`` returns (ADR-025)."""
+    tail = closes.iloc[-(lookback + 1) :]
+    if len(tail) < 2:
+        return math.nan
+    return float(tail.pct_change().abs().iloc[1:].max())
+
+
 class SnapshotError(RuntimeError):
     """A snapshot could not be built; ``str(exc)`` is ``"<Type>: <message>"`` of the cause."""
 
@@ -92,6 +100,7 @@ class Snapshot:
     atr: float
     avg_vol_20: float
     rolling_high: float  # the highest close over the trailing stop's window
+    max_gap: float  # the largest one-day close-to-close move over the gap window, nan with fewer than two closes
     score: float
     annual_slope: float
     r2: float
@@ -116,6 +125,7 @@ class Snapshot:
             atr=atr(frame, params.atr_period),
             avg_vol_20=float(frame["volume"].iloc[-20:].mean()),
             rolling_high=float(closes.rolling(params.stop_window).max().iloc[-1]),
+            max_gap=_max_gap(closes, params.gap_lookback),
             score=score,
             annual_slope=slope,
             r2=r2,
@@ -137,6 +147,7 @@ class Snapshot:
             atr=nan,
             avg_vol_20=nan,
             rolling_high=nan,
+            max_gap=nan,
             score=nan,
             annual_slope=nan,
             r2=nan,

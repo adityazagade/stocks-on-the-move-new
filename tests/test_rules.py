@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -57,6 +58,16 @@ def test_snapshot_fields_on_a_full_frame():
     assert snap.rolling_high == pytest.approx(snap.last)  # an uptrend's highest close is the last one
     assert snap.r2 == pytest.approx(1.0) and snap.score > 0
     assert len(snap.closes) == 150
+
+
+def test_snapshot_measures_the_largest_one_day_move_over_the_gap_window():
+    steady = trending_closes(150, daily=0.001)
+    assert snapshot("STEADY", steady).max_gap == pytest.approx(math.exp(0.001) - 1)
+    jumped = steady[:-50] + [c * 1.2 for c in steady[-50:]]  # a 20 % gap fifty days ago
+    assert snapshot("JUMPED", jumped).max_gap == pytest.approx(1.2 * math.exp(0.001) - 1)
+    old_jump = steady[:-95] + [c * 1.2 for c in steady[-95:]]  # ninety-five days ago: outside the window
+    assert snapshot("OLD", old_jump).max_gap == pytest.approx(math.exp(0.001) - 1)
+    assert math.isnan(snapshot("ONE", steady[:1]).max_gap)
 
 
 def test_snapshot_marks_a_short_frame_and_leaves_the_windows_it_cannot_fill_nan():
@@ -115,9 +126,18 @@ def test_evaluate_names_the_rule_that_excluded():
     assert thin.reason == "volume" and thin.avg_vol_20 == 100 and thin.atr is None
     wild = evaluate(snapshot("WILD", trending_closes(150), spread=0.25), P)
     assert wild.reason == "atr_pct" and wild.atr_pct is not None and wild.atr_pct > P.max_atr_pct
-    good = evaluate(snapshot("GOOD", trending_closes(150, daily=0.002)), P)
+    steady = trending_closes(150, daily=0.002)
+    gapped = evaluate(snapshot("GAPPED", steady[:-30] + [c * 1.2 for c in steady[-30:]]), P)
+    assert gapped.reason == "gap" and gapped.max_gap is not None and gapped.max_gap >= P.max_gap_pct
+    assert gapped.atr is not None  # the gap rule comes after the ATR rule, so the ATR was measured
+    good = evaluate(snapshot("GOOD", steady), P)
     assert good.reason is None and good.rank is not None and good.rank.symbol == "GOOD"
     assert good.row()["status"] == "ranked" and good.atr_pct is not None and good.atr_pct < P.max_atr_pct
+    assert good.max_gap is not None and good.max_gap < P.max_gap_pct
+    off = evaluate(
+        snapshot("GAPPED", steady[:-30] + [c * 1.2 for c in steady[-30:]]), dataclasses.replace(P, max_gap_pct=1.0)
+    )
+    assert off.reason is None  # 1 disables the rule
 
 
 def test_evaluate_turns_a_failed_snapshot_into_an_error_reason():
@@ -157,6 +177,7 @@ def test_exit_check_lists_every_rule_that_fired():
     down = snapshot("DOWN", steady[:-10] + [c * 0.5 for c in steady[-10:]])
 
     assert exit_check(None, None, 0.1, P) == ExitCheck(("unranked",))
+    assert exit_check(None, None, 0.1, P, unranked_cause="gap") == ExitCheck(("unranked:gap",))
     hold = exit_check(up, rank_item("UP", close=200.0, ma100=150.0), 0.1, P)
     assert hold.reasons == () and hold.sell is False and hold.stop_level is not None
     both = exit_check(up, rank_item("UP", close=90.0, ma100=90.0), 0.9, P)

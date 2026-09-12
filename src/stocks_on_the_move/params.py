@@ -35,6 +35,7 @@ class StrategyParams:
     weight_mid: float = 0.3
     weight_long: float = 0.1
     reg_lookback: int = 90
+    gap_lookback: int = 90  # trading days the gap filter looks back over (ADR-025)
     trend_ma_period: int = 100  # a stock must close above this simple moving average to be ranked (ADR-024)
     regime_ma_period: int = 200  # the index must close above this simple moving average for buys
     trading_days_yr: int = 250
@@ -48,6 +49,7 @@ class StrategyParams:
     exit_multiple: float = _setting_default("exit_multiple")
     min_volume: int = _setting_default("min_volume")
     max_atr_pct: float = _setting_default("max_atr_pct")
+    max_gap_pct: float = _setting_default("max_gap_pct")
 
     @classmethod
     def from_settings(cls, settings: Settings) -> StrategyParams:
@@ -60,6 +62,7 @@ class StrategyParams:
             exit_multiple=settings.exit_multiple,
             min_volume=settings.min_volume,
             max_atr_pct=settings.max_atr_pct,
+            max_gap_pct=settings.max_gap_pct,
         )
 
     @property
