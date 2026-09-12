@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from pathlib import Path
-from typing import Any, get_type_hints
+from typing import Any, Literal, get_args, get_origin, get_type_hints
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -272,6 +272,11 @@ def parse_overrides(pairs: Iterable[str], base: StrategyParams) -> StrategyParam
         if not sep or name not in hints:
             raise ValueError(f"cannot set {pair!r}: choose one of {', '.join(sorted(hints))} as NAME=VALUE")
         kind = hints[name]
+        if get_origin(kind) is Literal:
+            if raw not in get_args(kind):
+                raise ValueError(f"cannot set {name}={raw!r}: choose one of {', '.join(map(str, get_args(kind)))}")
+            updates[name] = raw
+            continue
         try:
             updates[name] = int(raw) if kind is int else float(raw)
         except ValueError as exc:

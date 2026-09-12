@@ -383,7 +383,9 @@ replays every trading Wednesday: the pipeline sees candles strictly before the
 run date, every intent fills at that date's close through `PlanExecutor`, and
 the result lands under `runs/backtests/<from>_<to>-<label>/` as `equity.csv`,
 `weekly.csv`, `trades.csv`, `params.json` and `summary.json`. `--set
-lookback_short=21` overrides a `StrategyParams` field for a variant;
+lookback_short=21` overrides a `StrategyParams` field for a variant, and
+`--set score=slope` ranks by the book's regression slope instead of the blend
+(ADR-028's comparison);
 `compare baseline long` prints the summaries side by side. Read the first
 line of every summary before the numbers: the universe is today's
 constituents over the whole range and fills are at the close with fixed
