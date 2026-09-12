@@ -225,6 +225,12 @@ small fake object exposing the methods you need, for example an `ltp`
 method returning `{"NSE:TCS": {"last_price": 100.0}}`, and monkeypatch
 `kite_call` or `candles_df` where the function goes to the network.
 
+**Decisions.** Every change beyond a typo starts with an Architecture
+Decision Record in `docs/adr/`. Draft it as Proposed, commit it on its own,
+wait for it to be Accepted, then implement, naming the ADR in every commit.
+ADR-001 defines the process and the threshold; `docs/adr/README.md` is the
+index.
+
 **Commits.** Small, one concern each, imperative subject, body says why.
 Look at `git log` for the house style. Do not create `momentum_v5.py`; the
 `archive/` folder exists because that used to be how versions were tracked,
@@ -239,7 +245,7 @@ deserves a note in the commit body.
 ## 7. Known rough edges
 
 Things we know about and have not fixed. Good first tasks, in rough order of
-value.
+value. Each one needs an ADR before the fix; see `docs/adr/`.
 
 1. **Stale names and docstring for the lookbacks.** See section 1. Renaming
    the constants to `LOOKBACK_SHORT/MID/LONG` and fixing the

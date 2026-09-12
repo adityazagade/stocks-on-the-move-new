@@ -71,6 +71,9 @@ uv add --dev <package>        # dev-only dependency
 uv lock --upgrade && uv sync  # refresh everything within the pyproject bounds
 ```
 
+Every change beyond a typo starts with an Architecture Decision Record in
+`docs/adr/`. ADR-001 describes the process.
+
 ## Layout
 
 ```
@@ -78,6 +81,7 @@ src/stocks_on_the_move/
   momentum.py     the strategy (formerly test_updated_v4.py)
   __main__.py     python -m entry point
 tests/            pytest suite
+docs/adr/         architecture decision records
 archive/          earlier iterations v0 to v3, kept for reference, not installed
 ```
 
