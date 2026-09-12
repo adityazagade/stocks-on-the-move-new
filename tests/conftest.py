@@ -21,6 +21,20 @@ from stocks_on_the_move.candles import CandleStore
 from stocks_on_the_move.settings import Settings
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help="rewrite tests/fixtures/golden/expected/ from the current build (ADR-009); review the diff",
+    )
+
+
+@pytest.fixture
+def update_golden(request: pytest.FixtureRequest) -> bool:
+    return bool(request.config.getoption("--update-golden"))
+
+
 @pytest.fixture
 def make_settings(tmp_path) -> Callable[..., Settings]:
     """``make_settings(**overrides)`` -> a Settings that ignores the environment; paper mode, tmp paths."""

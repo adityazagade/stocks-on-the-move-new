@@ -158,7 +158,74 @@ against frozen inputs and compares its outputs to committed expected files.
 
 ## Implementation Status
 
-Not started.
+Code complete on 2026-09-12; awaiting plan step 4's confirmation by the owner
+in the pull request, and the Implemented status of ADR-006, ADR-007 and
+ADR-008 that plan step 1 asks for (their code is merged; their statuses wait
+on the owner's paper-run comparison).
+
+- **The fixtures are synthetic.** The repository is public, so the licence
+  condition in the Decision and in Notes applies from day one: no Kite data
+  enters the repository. Option 2 of the alternatives, kept there as the
+  fallback for exactly this case, is what landed. `make_fixtures.py`
+  generates 37 instruments (36 NSE names plus the NIFTY 50 index token) as
+  seeded geometric random walks with a role each, documented in the script
+  and in `meta.json`: strong trends that rank and are bought, weaker trends
+  ranked beyond the cut-off, held names that survive, one that falls below
+  its EMA-100 and is sold as unranked, one whose 12 % drop trips the
+  trailing stop while it is still above its EMA-100, two `-BE` names (one
+  held and sold at the bid, one ranked and bought at the ask), three names
+  short of history including one with no candles, two below the volume
+  floor, two above the ATR ceiling, one outside the universe list, one that
+  is not an equity. Daily noise is held near 0.5 % so the drifts, not the
+  last five days' noise, order the ranking. The instrument roster is small
+  enough to read; the licence risk is gone; the realism of real gaps,
+  splits and volume profiles is not there, as Option 2's Cons say.
+- **Layout as decided**, with two additions: `quotes.csv` (top of book for
+  the `-BE` names, which the pipeline needs for LIMIT prices) and
+  `trades.csv` among the compared tables (the money outcome of the run).
+  `meta.json` holds both `as_of` dates, the settings overrides, the seed and
+  the roster. Expected files live under `expected/even_week/` and
+  `expected/odd_week/`.
+- **The test** (`tests/test_golden.py`) builds `Settings` from `meta.json`
+  over the conftest defaults, a `FakeBroker` from the fixtures, a
+  `CandleStore` and `RunArtifacts` in the test's temporary directory, a
+  clock frozen at `as_of`, and calls `run(ctx)`, steps 2 to 12, so the
+  ledgers are the fixture copies and the compared tables are the ADR-006
+  artifacts themselves. Comparison is `pandas.testing.assert_frame_equal`
+  with `check_exact=False, rtol=1e-9, check_dtype=False`.
+  `uv run pytest --update-golden` rewrites `expected/` and skips with a
+  message telling the reader to review the diff.
+- **What the expected files show**, per configuration: every reachable
+  `universe.csv` reason (`ranked`, `below_ema100`, `history`, `volume`,
+  `atr_pct`); `exits.csv` with `HOLD`, `SELL` on `unranked` and `SELL` on
+  `rank_cutoff;trailing_stop`; a `LIMIT` sell at the bid and a `LIMIT` buy
+  at the ask; `sizing.csv` with a resize `SELL` and a resize `BUY` on the
+  even week and a header only on the odd week; `candidates.csv` with `BUY`,
+  `SKIP:held`, `SKIP:beyond_cutoff` and `SKIP:max_positions`. Not
+  reachable by construction and left to the unit tests: `insufficient_data`
+  and `error:<type>` in the universe, and the `below_ema100` exit reason,
+  which cannot fire for a ranked holding because ranking already requires
+  the close above the EMA-100.
+- Plan step 4 was run locally: a deliberate change to `CUT_OFF_PCT` in
+  `meta.json` fails both configurations with a frame diff naming the table
+  and the rows; reverted. Recorded in Notes.
+
+## Notes
+
+Licence condition: the fixtures are real Kite historical data and stay in
+the repository only while it is private. Making the repository public
+requires replacing them with synthetic data first.
+
+The repository was public when this ADR was implemented, so the condition
+above was met by never adding Kite data at all; see Implementation Status.
+If the repository is ever made private and the owner wants real fixtures,
+`make_fixtures.py` is the place to add a mode that copies chosen tokens from
+`.cache_candles/`; the test and the expected-file discipline do not change.
+
+The expected files encode the behaviour of the build that generated them
+(`main` after ADR-010), not independently verified behaviour. ADR-003's
+pandas 3 check is now: bump the bound in a branch, run this test, read the
+diff.
 
 ## Notes
 
