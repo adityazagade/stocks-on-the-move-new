@@ -26,6 +26,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-019](ADR-019-confirm-fills-before-booking-a-trade.md) | Confirm fills against the broker before booking a trade | Implemented | 2026-09-12 |
 | [ADR-020](ADR-020-split-the-strategy-module-along-its-seams.md) | Split the strategy module along its seams | Proposed | 2026-09-12 |
 | [ADR-021](ADR-021-snapshots-and-pure-rules.md) | One snapshot per symbol, and rules that are pure functions of it | Proposed | 2026-09-12 |
+| [ADR-022](ADR-022-trade-intents-one-executor-and-plan-mode.md) | Trade intents, one executor, bookkeeping in one place, and a plan mode | Proposed | 2026-09-12 |
 
 ## Writing a new ADR
 
