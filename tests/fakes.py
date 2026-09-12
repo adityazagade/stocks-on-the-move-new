@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 
-from stocks_on_the_move.broker import Candle, Instrument, Order, Quote
+from stocks_on_the_move.broker import Candle, Instrument, Order, OrderStatus, Quote
 
 # Kite hands back datetimes with a fixed +05:30 offset; the CSV cache round-trips the same.
 IST_OFFSET = timezone(timedelta(hours=5, minutes=30))
@@ -60,8 +60,18 @@ def trending_closes(n: int, *, start: float = 100.0, daily: float = 0.002, seed:
     return [float(v) for v in start * np.exp(np.cumsum(steps))]
 
 
+# One scripted answer to ``order_status``: (status, filled quantity, average price[, status message]).
+FillStep = tuple[str, int, float] | tuple[str, int, float, str | None]
+
+
 class FakeBroker:
-    """Canned instruments, candles per token, an LTP map and a quote map; records orders."""
+    """Canned instruments, candles per token, an LTP map and a quote map; records orders.
+
+    Every order fills in full on the first poll, at its limit price or the LTP,
+    unless ``script_fills`` scripted the symbol: then each poll consumes one step
+    and the last step repeats. A step that is terminal wins over a cancellation,
+    which is how a cancel that races a fill is modelled (ADR-019).
+    """
 
     def __init__(
         self,
@@ -77,8 +87,18 @@ class FakeBroker:
         self.quotes: dict[str, Quote] = dict(quotes or {})
         self.orders: list[Order] = []
         self.calls: list[tuple[str, Any]] = []
+        self.fills: dict[str, list[FillStep]] = {}  # symbol -> scripted status per poll; the last repeats
+        self._placed: dict[str, Order] = {}
+        self._polls: dict[str, int] = {}
+        self._cancelled: set[str] = set()
+        self._last: dict[str, OrderStatus] = {}
 
     # -- helpers for tests --------------------------------------------------
+    def script_fills(self, symbol: str, *steps: FillStep):
+        """What ``order_status`` answers, poll by poll, for the next orders on ``symbol``."""
+        self.fills[symbol] = list(steps)
+        return self
+
     def add_equity(self, symbol: str, token: int, closes: Sequence[float], *, end: date, ltp: float | None = None):
         self._instruments.append(Instrument(token, symbol, "NSE", "NSE", "EQ"))
         self.candles[token] = make_candles(closes, end=end)
@@ -107,7 +127,33 @@ class FakeBroker:
     def place_order(self, order: Order) -> str:
         self.calls.append(("place_order", order))
         self.orders.append(order)
-        return f"FAKE-{len(self.orders):04d}"
+        order_id = f"FAKE-{len(self.orders):04d}"
+        self._placed[order_id] = order
+        return order_id
+
+    def order_status(self, order_id: str) -> OrderStatus:
+        self.calls.append(("order_status", order_id))
+        order = self._placed[order_id]
+        poll = self._polls.get(order_id, 0)
+        self._polls[order_id] = poll + 1
+        script = self.fills.get(order.symbol)
+        if script:
+            step = script[min(poll, len(script) - 1)]
+            message = step[3] if len(step) > 3 else None
+            status = OrderStatus(order_id, step[0], step[1], order.quantity - step[1], step[2], message)
+        else:
+            key = f"{order.exchange}:{order.symbol}"
+            price = order.limit_price if order.limit_price is not None else self.ltps.get(key, 0.0)
+            status = OrderStatus(order_id, "COMPLETE", order.quantity, 0, price)
+        if order_id in self._cancelled and not status.terminal:
+            filled = status.filled_quantity
+            status = OrderStatus(order_id, "CANCELLED", filled, order.quantity - filled, status.average_price)
+        self._last[order_id] = status
+        return status
+
+    def cancel_order(self, order_id: str) -> None:
+        self.calls.append(("cancel_order", order_id))
+        self._cancelled.add(order_id)
 
     def profile(self) -> dict[str, Any]:
         self.calls.append(("profile", None))
