@@ -246,6 +246,15 @@ re-validated against it.
 **Lint and format.** ruff, configured in `pyproject.toml`, 120-column lines,
 rule sets E/W/F/I/UP/B/C4/SIM. `archive/` is excluded and must stay that way.
 
+**Secret scanning.** gitleaks runs on every commit and in CI (ADR-012) with the
+default rules plus `.gitleaks.toml`, which names this project's credentials:
+a `KITE_API_KEY` or `KITE_API_SECRET` with a value, or an `access_token` in a
+session file. Findings are redacted. `.env.example`, `docs/adr/` and this file
+are the only allowlisted paths; a false positive on test data gets a
+fingerprint in `.gitleaksignore` with a comment, never a wider allowlist.
+`detect-private-key` runs alongside. A secret pasted into a chat or a log is
+outside what scanning can catch: rotate it.
+
 **Type checking.** ty (ADR-010), pinned exactly in the dev group and at the
 same version in `.pre-commit-config.yaml`; `uv run ty check` checks `src/` and
 `tests/` against Python 3.12, the lowest version the project promises. The

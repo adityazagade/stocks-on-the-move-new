@@ -138,4 +138,46 @@ Add secret scanning to the pre-commit configuration, and therefore to CI
 
 ## Implementation Status
 
-Not started.
+Code complete on 2026-09-12; awaiting the CI half of the validation in the
+pull request.
+
+- **Step 1, adopt.** `gitleaks/gitleaks` at `v8.30.1` (hook id `gitleaks`)
+  and `detect-private-key` in `.pre-commit-config.yaml`; `.gitleaks.toml`
+  extends the default rules with `kite-credential-assignment` and
+  `kite-access-token-json`; allowlisted paths are `.env.example`,
+  `docs/adr/*.md` and `ONBOARDING.md`, nothing else. The onboarding guide's
+  tooling section gained a paragraph.
+- **Step 2, the history scan**, over all 37 commits with the first draft of
+  the rules: 5 findings, none a credential. Four came from the project rule
+  matching `kite_api_key: SecretStr` (a type annotation in `settings.py`)
+  and `kite_api_key="test-key"` (a test keyword argument); the rule now
+  matches the environment form only, `KITE_API_KEY=...` in upper case with
+  `=`, which is how a credential appears in `.env`, a shell, a run
+  configuration or YAML. One came from the default `generic-api-key` rule on
+  the request-token constant in the ADR-005 tests; the constant is now a
+  low-entropy value and its historical occurrence is one fingerprint in
+  `.gitleaksignore` with a comment. The full-history scan is then clean:
+  "no leaks found". A filesystem scan of the working directory still finds
+  the real credentials in the git-ignored `.env`, as it should; the hook
+  scans staged content and never sees that file.
+- **Step 3, the refusal.** On a scratch branch, a staged file containing
+  `KITE_API_SECRET=abcdefgh12345678` was refused: hook `Detect hardcoded
+  secrets` failed, rule `kite-credential-assignment`, the secret shown as
+  `REDACTED`, the value absent from the whole output. Branch deleted.
+- **CI.** The hook runs `gitleaks git --pre-commit --staged`; in CI nothing
+  is staged, so through pre-commit alone the scan would pass trivially and
+  the Consequence "fails CI before anyone pulls" would be false. The CI
+  `checks` job therefore also runs `gitleaks/gitleaks-action` (v3.0.0,
+  pinned by SHA) over the pushed commits with the same `.gitleaks.toml`, the
+  same gitleaks version and PR comments off so the job keeps
+  `contents: read`. Its first run happens with this pull request.
+
+## Notes
+
+- Two rule details differ from the Decision's wording. Six characters, not
+  eight, is the minimum value length, because a real Kite API key is seven
+  characters. The rule is case-sensitive and requires `=`, not `:`, for the
+  reason under step 2; a real secret in a Python literal is still covered
+  by the default entropy rules.
+- gitleaks reads `.gitleaks.toml` from the repository root on its own; the
+  CI step passes it explicitly all the same.

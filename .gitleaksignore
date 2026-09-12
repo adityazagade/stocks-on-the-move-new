@@ -1,0 +1,6 @@
+# Fingerprints gitleaks must ignore (ADR-012). One line per finding, each with a reason;
+# never a blanket allowlist. Format: [commit:]path:rule-id:line
+
+# The request-token constant in the ADR-005 tests as first committed; test data, not a
+# credential. Replaced by a low-entropy value in the ADR-012 commit; this covers history.
+32b9849b352d3162e925341465e61a60f5765e4f:tests/test_kite_auth.py:generic-api-key:26
