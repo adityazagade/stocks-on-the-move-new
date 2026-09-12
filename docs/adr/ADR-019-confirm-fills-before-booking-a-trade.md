@@ -1,6 +1,6 @@
 # ADR-019: Confirm fills against the broker before booking a trade
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-12
 - **Last Updated**: 2026-09-12
 - **Author**: Aditya Zagade
@@ -330,9 +330,64 @@ Cancel the remainder and book nothing.
 
 ## Implementation Status
 
-Proposed; nothing implemented.
+Implemented on 2026-09-12, two commits. Plan steps 1 to 3 are done; step 4's
+first live run is the owner's, and the same run serves as the outstanding
+live check for ADR-006, 007, 008, 009 and 015.
+
+- **Broker layer** (`broker.py`, `tests/fakes.py`, `tests/test_broker.py`).
+  `OrderStatus` with the six named fields and a `terminal` property over
+  `TERMINAL_STATUSES`; `order_status` and `cancel_order` on the protocol.
+  `KiteBroker.order_status` reads the last entry of `order_history` through
+  `call`, so spacing and backoff apply, and reports `UNKNOWN`, not terminal,
+  when the history is still empty; `cancel_order` cancels the regular variety.
+  `PaperBroker` remembers a fill per order at placement, the limit price or
+  the wrapped broker's last price, and reports it `COMPLETE` on the first
+  poll; its `cancel_order` logs and does nothing. `FakeBroker` does the same
+  by default and takes a scripted status sequence per symbol through
+  `script_fills`; a terminal step wins over a cancellation, which models the
+  cancel that races a fill.
+- **Strategy layer** (`momentum.py`). `await_fill` polls in a budget of
+  `ceil(FILL_TIMEOUT_SECONDS / FILL_POLL_SECONDS)` polls, cancels, then polls
+  the same budget again, sleeping through `RunContext.sleep`. `_place` writes
+  the order to `orders.csv` as `PLACED` before the wait and with its verdict
+  after, then books the filled quantity at the broker's average price. Both
+  `safe_*` functions return a `Fill`; `filled_qty` reads it as zero for
+  `None`. `record_trade` writes `slippage_pct` zero unless `ctx.paper`. The
+  five call sites move positions by what filled, with `SELL:partial`,
+  `BUY:partial` and `SKIP:no_fill` as the new decision values; the kill
+  switch lists remaining quantities. `_finish` writes `orders.csv` so the
+  file exists for every run.
+- **Settings**: `FILL_TIMEOUT_SECONDS` (120, 1 to 900) and `FILL_POLL_SECONDS`
+  (2.0, 0.5 to 30) under "Order confirmation (ADR-019)"; `.env.example`
+  regenerated.
+- **Docs**: `ONBOARDING.md` pipeline table, file lifecycle, section 4 and
+  section 6 paragraphs, rough edge 1 closed; the README's research-code note
+  rewritten.
+- **Tests** (`tests/test_fills.py`, twenty): the wait (first-poll fill with
+  no sleep, polling at the interval, timeout then cancel, cancel racing a
+  fill, an order that neither fills nor cancels, the paper broker's zero
+  wait); booking (rejection with its message, a fill with no average price,
+  live rows without slippage, paper rows with it, `orders.csv` before and
+  after the wait); and each of the five sites with a partial fill, a
+  rejection or both, plus the run where an unfilled exit leaves less cash
+  for the buys. `tests/test_pipeline.py` reads the price off the `Fill` and
+  expects eleven files. 219 tests pass; `ty` is clean; the golden test's
+  existing expected files did not move and gained `orders.csv`.
 
 ## Notes
+
+Three refinements from implementing the Decision as written:
+
+- `safe_buy` and `safe_sell` return a `Fill` with `filled` zero for an order
+  that was sent and ended without a trade, and `None` only when nothing was
+  sent. The Decision said `None` for both; the call sites need the
+  difference to write `SKIP:no_fill` rather than ADR-017's `SKIP:no_price`.
+- A fill whose average price comes back as zero is booked at the price the
+  strategy saw, with a WARNING. The shares exist; a row with price zero
+  would not be written at all.
+- `orders.csv` gets the row at placement, status `PLACED`, so a crash during
+  the wait still leaves the order id on disk. The Decision had it written
+  after each order completed.
 
 The owner's prompt for this ADR was Kite's Postback URL. It is the right
 instinct, confirm fills from the broker rather than assume them, in a shape

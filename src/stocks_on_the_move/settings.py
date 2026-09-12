@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     fees_pct: float = Field(0.0015, ge=0, description="All-in fee fraction booked on every trade.")
     slippage_pct: float = Field(0.0005, ge=0, description="Slippage fraction booked on every trade.")
 
+    # ── Order confirmation (ADR-019) ─────────────────────────────────────
+    fill_timeout_seconds: int = Field(
+        120, ge=1, le=900, description="Seconds to wait for an order to fill before cancelling what has not."
+    )
+    fill_poll_seconds: float = Field(2.0, ge=0.5, le=30, description="Seconds between two order-status polls.")
+
     # ── Kite rate limiting ───────────────────────────────────────────────
     kite_rps: float = Field(2.0, ge=0, description="Ceiling on Kite REST calls per second (floored at 0.1).")
     kite_max_retries: int = Field(6, ge=1, description="Attempts per Kite call while it answers 'too many requests'.")
@@ -226,6 +232,7 @@ EXAMPLE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Scheduling", ("trading_weekday",)),
     ("Cash flow for this run", ("env_cashflow", "cashflow_note")),
     ("Friction", ("fees_pct", "slippage_pct")),
+    ("Order confirmation (ADR-019)", ("fill_timeout_seconds", "fill_poll_seconds")),
     ("Kite rate limiting", ("kite_rps", "kite_max_retries", "candle_sleep_sec")),
     ("Logging", ("log_level",)),
     ("Files", ("portfolio_file", "out_file", "cash_ledger_file", "trades_ledger_file", "cache_dir", "runs_dir")),

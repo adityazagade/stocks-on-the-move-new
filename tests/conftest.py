@@ -71,8 +71,9 @@ def make_context(make_settings) -> Callable[..., m.RunContext]:
     """``make_context(broker=None, *, now=None, **settings_overrides)`` -> RunContext over a FakeBroker.
 
     The clock is frozen at a Wednesday in an even ISO week unless ``now`` says
-    otherwise; the candle store's "today" follows that clock, and it never sleeps.
-    ``artifacts=True`` gives the context a real run directory under the tmp path.
+    otherwise; the candle store's "today" follows that clock, and neither it nor
+    the wait for a fill ever sleeps. ``artifacts=True`` gives the context a real
+    run directory under the tmp path.
     """
 
     def make(
@@ -88,7 +89,7 @@ def make_context(make_settings) -> Callable[..., m.RunContext]:
         candles = CandleStore(
             broker, s.cache_dir, sleep_sec=s.candle_sleep_sec, sleep=lambda _: None, today=lambda: clock().date()
         )
-        ctx = m.RunContext(settings=s, broker=broker, candles=candles, now=clock, paper=True)
+        ctx = m.RunContext(settings=s, broker=broker, candles=candles, now=clock, paper=True, sleep=lambda _: None)
         if artifacts:  # a real run directory under the test's runs_dir (ADR-006)
             ctx.artifacts = RunArtifacts.create(s.runs_dir, started=clock(), mode=m.run_mode(s), settings=s)
         return ctx

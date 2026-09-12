@@ -17,8 +17,9 @@ through the environment:
 - cash_ledger.csv         date, amount, note   (+ deposit, - withdrawal)
 - trades_ledger.csv       timestamp, side, symbol, qty, price, fees_pct, slippage_pct, cash_delta
 
-NOTE: Research code. Real-money deployment should add robust order-state handling
-and broker-confirmed fills before writing the trade ledger.
+A trade reaches the ledger only after the broker has said what filled
+(ADR-019): the order's status is polled until it is terminal, and the filled
+quantity and the broker's average price are what get booked.
 """
 
 from __future__ import annotations
@@ -40,7 +41,16 @@ import pandas as pd
 
 from stocks_on_the_move import kite_auth
 from stocks_on_the_move.artifacts import Artifacts, NoArtifacts, RunArtifacts
-from stocks_on_the_move.broker import Broker, Instrument, KiteBroker, Order, OrderType, PaperBroker, Side
+from stocks_on_the_move.broker import (
+    Broker,
+    Instrument,
+    KiteBroker,
+    Order,
+    OrderStatus,
+    OrderType,
+    PaperBroker,
+    Side,
+)
 from stocks_on_the_move.candles import CandleStore
 from stocks_on_the_move.logging_setup import configure_logging
 from stocks_on_the_move.settings import Settings, SettingsError
@@ -96,6 +106,20 @@ EXIT_COLUMNS = ["symbol", "qty", "rank", "pct_rank", "close", "ema100", "stop_le
 SIZING_COLUMNS = ["symbol", "qty", "price", "atr", "risk_qty", "cap_qty", "target_qty", "delta", "action"]
 CANDIDATE_COLUMNS = ["rank", "symbol", "pct_rank", "decision", "qty", "est_cost", "cash_after"]
 TRADE_COLUMNS = ["timestamp", "side", "symbol", "qty", "price", "fees_pct", "slippage_pct", "cash_delta"]
+ORDER_COLUMNS = [  # every order this run sent and what the broker did with it (ADR-019)
+    "order_id",
+    "symbol",
+    "side",
+    "order_type",
+    "limit_price",
+    "requested_qty",
+    "status",
+    "filled_qty",
+    "average_price",
+    "status_message",
+    "polls",
+    "waited_s",
+]
 
 # Timezone: run scheduling and biweekly parity in IST
 IST = ZoneInfo("Asia/Kolkata")
@@ -122,6 +146,34 @@ RankItem = namedtuple(
 )
 
 
+@dataclass(frozen=True)
+class Fill:
+    """What the broker did with one order (ADR-019).
+
+    ``filled`` is what the account actually gained or lost, and ``price`` the
+    broker's average for it. ``filled`` below ``requested`` is a partial fill;
+    zero means the order ended without a trade. ``safe_buy`` and ``safe_sell``
+    return ``None`` instead when nothing was sent at all.
+    """
+
+    symbol: str
+    side: Side
+    order_id: str
+    status: str
+    requested: int
+    filled: int
+    price: float
+
+    @property
+    def partial(self) -> bool:
+        return 0 < self.filled < self.requested
+
+
+def filled_qty(fill: Fill | None) -> int:
+    """The shares a trade attempt actually moved: zero for nothing sent and for nothing filled."""
+    return 0 if fill is None else fill.filled
+
+
 @dataclass
 class Portfolio:
     """Positions, the cash reconstructed from the ledgers, and the names sold this run."""
@@ -130,6 +182,7 @@ class Portfolio:
     cash: float = 0.0
     sold: set[str] = field(default_factory=set)
     trades: list[dict[str, Any]] = field(default_factory=list)  # the rows appended to the ledger this run
+    orders: list[dict[str, Any]] = field(default_factory=list)  # every order sent this run (ADR-019)
 
 
 @dataclass
@@ -140,7 +193,8 @@ class RunContext:
     of a ``PaperBroker`` as ``broker``. ``universe`` supplies the base symbols
     the strategy may hold; ``None`` means the NSE archives, per settings.
     ``artifacts`` receives every table the run writes (ADR-006); the default
-    writes nothing.
+    writes nothing. ``sleep`` is what the wait for a fill sleeps with (ADR-019);
+    tests pass a no-op.
     """
 
     settings: Settings
@@ -152,6 +206,7 @@ class RunContext:
     tokens: dict[str, int] = field(default_factory=dict)  # "EXCH:SYMBOL" -> instrument_token
     universe: Callable[[], set[str]] | None = None
     artifacts: Artifacts = field(default_factory=NoArtifacts)
+    sleep: Callable[[float], None] = time.sleep
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -256,11 +311,13 @@ def record_trade(ctx: RunContext, side: str, symbol: str, qty: int, price: float
     if qty <= 0 or price <= 0:
         return 0.0
     side = side.upper()
-    # Approximate all-in price impact
+    # A paper price is the price seen, so the slippage estimate applies; a live fill's average
+    # price already contains whatever slippage there was (ADR-019). Fees sit outside both.
+    slippage = s.slippage_pct if ctx.paper else 0.0
     if side == "BUY":
-        cash_delta = -qty * price * (1.0 + s.fees_pct + s.slippage_pct)
+        cash_delta = -qty * price * (1.0 + s.fees_pct + slippage)
     elif side == "SELL":
-        cash_delta = +qty * price * (1.0 - s.fees_pct - s.slippage_pct)
+        cash_delta = +qty * price * (1.0 - s.fees_pct - slippage)
     else:
         raise ValueError("side must be BUY or SELL")
     values = [
@@ -270,7 +327,7 @@ def record_trade(ctx: RunContext, side: str, symbol: str, qty: int, price: float
         qty,
         f"{price:.4f}",
         f"{s.fees_pct:.6f}",
-        f"{s.slippage_pct:.6f}",
+        f"{slippage:.6f}",
         f"{cash_delta:.2f}",
     ]
     _append_row(s.trades_ledger_file, values)
@@ -593,15 +650,107 @@ def _price_for(ctx: RunContext, sym: str, side: Side) -> tuple[float, OrderType]
     return ltp_map(ctx.broker, [sym]).get(sym, 0.0), "MARKET"
 
 
-def _place(ctx: RunContext, sym: str, side: Side, qty: int, price: float, order_type: OrderType) -> None:
+def await_fill(ctx: RunContext, order_id: str) -> tuple[OrderStatus, int, float]:
+    """Poll the broker until the order is terminal, cancelling what has not filled by the timeout (ADR-019).
+
+    Polls every ``FILL_POLL_SECONDS`` for up to ``FILL_TIMEOUT_SECONDS``, counted
+    in polls so a test with a no-op ``sleep`` walks the same path. Past the
+    timeout the order is cancelled and polled again for as long; a cancel that
+    races a fill comes back COMPLETE and is booked as such. Returns the last
+    status, the polls made and the seconds asked of ``ctx.sleep``.
+    """
+    s = ctx.settings
+    interval = s.fill_poll_seconds
+    budget = max(1, math.ceil(s.fill_timeout_seconds / interval))
+    polls = 0
+    waited = 0.0
+
+    def poll(*, sleep_first: bool) -> OrderStatus:
+        nonlocal polls, waited
+        for i in range(budget):
+            if i or sleep_first:
+                ctx.sleep(interval)
+                waited += interval
+            status = ctx.broker.order_status(order_id)
+            polls += 1
+            if status.terminal or i == budget - 1:
+                return status
+        raise AssertionError("unreachable: the budget is at least one poll")
+
+    status = poll(sleep_first=False)
+    if status.terminal:
+        return status, polls, waited
+    logger.warning(
+        "Order %s still %s after %d poll(s) over %.0fs; cancelling what has not filled",
+        order_id,
+        status.status,
+        polls,
+        waited,
+    )
+    ctx.broker.cancel_order(order_id)
+    status = poll(sleep_first=True)
+    if not status.terminal:
+        logger.warning(
+            "Order %s neither filled nor cancelled after %d polls; the broker's order book is the truth. "
+            "Booking the %d filled so far",
+            order_id,
+            polls,
+            status.filled_quantity,
+        )
+    return status, polls, waited
+
+
+def _place(ctx: RunContext, sym: str, side: Side, qty: int, price: float, order_type: OrderType) -> Fill:
+    """Send the order, wait for the broker's verdict, book what filled (ADR-019)."""
+    pf = ctx.portfolio
     limit = price if order_type == "LIMIT" else None
-    ctx.broker.place_order(Order(sym, side, qty, order_type, limit_price=limit))
-    record_trade(ctx, side, sym, qty, price)
-    logger.info(_TRADE_LINE[(ctx.paper, side)], sym, qty, price, ctx.portfolio.cash)
+    order_id = ctx.broker.place_order(Order(sym, side, qty, order_type, limit_price=limit))
+    row: dict[str, Any] = {
+        "order_id": order_id,
+        "symbol": sym,
+        "side": side,
+        "order_type": order_type,
+        "limit_price": limit,
+        "requested_qty": qty,
+        "status": "PLACED",
+        "filled_qty": 0,
+        "average_price": None,
+        "status_message": None,
+        "polls": 0,
+        "waited_s": 0.0,
+    }
+    pf.orders.append(row)
+    ctx.artifacts.write_table("orders", ORDER_COLUMNS, pf.orders)  # a crash mid-wait still leaves the order id
+
+    status, polls, waited = await_fill(ctx, order_id)
+    row.update(
+        status=status.status,
+        filled_qty=status.filled_quantity,
+        average_price=status.average_price,
+        status_message=status.status_message,
+        polls=polls,
+        waited_s=round(waited, 1),
+    )
+    ctx.artifacts.write_table("orders", ORDER_COLUMNS, pf.orders)
+
+    filled = status.filled_quantity
+    if filled <= 0:
+        why = f"{status.status}: {status.status_message}" if status.status_message else status.status
+        logger.warning("%s %s x%d: nothing filled (%s); nothing booked", side, sym, qty, why)
+        return Fill(sym, side, order_id, status.status, qty, 0, 0.0)
+    book_price = status.average_price
+    if book_price <= 0:  # filled, but no average came back; the price seen is the best record there is
+        logger.warning("%s %s: %d filled but no average price came back; booking at %.2f", side, sym, filled, price)
+        book_price = price
+    if filled < qty:
+        logger.warning("%s %s: %d of %d filled (%s); booking the part that did", side, sym, filled, qty, status.status)
+    record_trade(ctx, side, sym, filled, book_price)
+    logger.info(_TRADE_LINE[(ctx.paper, side)], sym, filled, book_price, pf.cash)
+    return Fill(sym, side, order_id, status.status, qty, filled, book_price)
 
 
-def safe_buy(ctx: RunContext, sym: str, qty: int) -> float | None:
-    """Place a BUY order and record its cash impact; returns the price used if placed."""
+def safe_buy(ctx: RunContext, sym: str, qty: int) -> Fill | None:
+    """Place a BUY order and book what filled; ``None`` when nothing was sent (ADR-019)."""
     if qty < MIN_SHARES:
         return None
     price_used, order_type = _price_for(ctx, sym, "BUY")
@@ -612,20 +761,18 @@ def safe_buy(ctx: RunContext, sym: str, qty: int) -> float | None:
     if need > ctx.portfolio.cash + 1e-6:
         logger.info("Not enough cash for BUY %s x%d (need %.2f, have %.2f)", sym, qty, need, ctx.portfolio.cash)
         return None
-    _place(ctx, sym, "BUY", qty, price_used, order_type)
-    return price_used
+    return _place(ctx, sym, "BUY", qty, price_used, order_type)
 
 
-def safe_sell(ctx: RunContext, sym: str, qty: int) -> float | None:
-    """Place a SELL order and record its cash impact; returns the price used if placed."""
+def safe_sell(ctx: RunContext, sym: str, qty: int) -> Fill | None:
+    """Place a SELL order and book what filled; ``None`` when nothing was sent (ADR-019)."""
     if qty < MIN_SHARES:
         return None
     price_used, order_type = _price_for(ctx, sym, "SELL")
     if price_used <= 0:
         logger.warning("No price for %s; SELL x%d skipped", sym, qty)
         return None
-    _place(ctx, sym, "SELL", qty, price_used, order_type)
-    return price_used
+    return _place(ctx, sym, "SELL", qty, price_used, order_type)
 
 
 # ── 5 ▸ exit & size-rebalance ────────────────────────────────────────────
@@ -710,19 +857,26 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
         rank = rmap.get(sym)
         pct = (idx[sym] + 1) / total if sym in idx else 1.0
         check = exit_reasons(ctx, rank, pct)
-        price = None
+        fill = None
         decision = "HOLD"
         if check.sell:
-            price = safe_sell(ctx, sym, qty)
-            if price is None:  # nothing was sent, so nothing changes (ADR-017)
+            fill = safe_sell(ctx, sym, qty)
+            got = filled_qty(fill)
+            if fill is None:  # nothing was sent, so nothing changes (ADR-017)
                 logger.warning(
                     "%s: exit wanted (%s) but no price came back; the holding stays", sym, ";".join(check.reasons)
                 )
                 decision = "SKIP:no_price"
+            elif got == 0:  # sent, nothing filled; _place said why (ADR-019)
+                decision = "SKIP:no_fill"
             else:
-                pf.positions.pop(sym)
-                pf.sold.add(sym)
-                decision = "SELL"
+                pf.sold.add(sym)  # even a partial exit bars a buy-back this run
+                if got == qty:
+                    pf.positions.pop(sym)
+                    decision = "SELL"
+                else:
+                    pf.positions[sym] = qty - got
+                    decision = "SELL:partial"
         rows.append(
             {
                 "symbol": sym,
@@ -734,7 +888,7 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
                 "stop_level": check.stop_level,
                 "reasons": ";".join(check.reasons),
                 "decision": decision,
-                "price": price,
+                "price": fill.price if fill is not None and fill.filled else None,
             }
         )
     ctx.artifacts.write_table("exits", EXIT_COLUMNS, rows)
@@ -789,10 +943,14 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
 
     # 1️⃣ sell downs first
     for sym, delta in to_down.items():
-        if safe_sell(ctx, sym, delta) is None:  # nothing was sent, so the quantity stays (ADR-017)
-            rows[sym]["action"] = "SKIP:not_placed"
+        fill = safe_sell(ctx, sym, delta)
+        got = filled_qty(fill)
+        if got == 0:  # nothing sent, or nothing filled: the quantity stays (ADR-017, ADR-019)
+            rows[sym]["action"] = "SKIP:not_placed" if fill is None else "SKIP:no_fill"
             continue
-        pf.positions[sym] -= delta
+        if got < delta:
+            rows[sym]["action"] = "SELL:partial"
+        pf.positions[sym] -= got
         if pf.positions[sym] == 0:
             pf.positions.pop(sym)
             pf.sold.add(sym)
@@ -810,10 +968,14 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
         if need > pf.cash + 1e-6:
             rows[sym]["action"] = "SKIP:no_cash"
             continue
-        if safe_buy(ctx, sym, delta) is not None:
-            pf.positions[sym] = pf.positions.get(sym, 0) + delta
-        else:
-            rows[sym]["action"] = "SKIP:not_placed"
+        fill = safe_buy(ctx, sym, delta)
+        got = filled_qty(fill)
+        if got == 0:
+            rows[sym]["action"] = "SKIP:not_placed" if fill is None else "SKIP:no_fill"
+            continue
+        if got < delta:
+            rows[sym]["action"] = "BUY:partial"
+        pf.positions[sym] = pf.positions.get(sym, 0) + got
     ctx.artifacts.write_table("sizing", SIZING_COLUMNS, rows.values())
 
 
@@ -853,10 +1015,13 @@ def liquidate_all(ctx: RunContext) -> None:
     logger.warning("KILL SWITCH activated – liquidating all %d positions", len(pf.positions))
     unsold: list[str] = []
     for sym, qty in list(pf.positions.items()):
-        if safe_sell(ctx, sym, qty) is None:  # nothing was sent, so the holding stays (ADR-017)
-            unsold.append(sym)
+        got = filled_qty(safe_sell(ctx, sym, qty))
+        if got == qty:
+            pf.positions.pop(sym)
             continue
-        pf.positions.pop(sym)
+        if got:  # a partial exit leaves the remainder (ADR-019)
+            pf.positions[sym] = qty - got
+        unsold.append(f"{sym} x{qty - got}")  # nothing sent or nothing filled: the holding stays (ADR-017)
     if unsold:
         logger.warning("KILL SWITCH could not sell %d position(s), still held: %s", len(unsold), ", ".join(unsold))
     logger.warning("KILL SWITCH complete – %d position(s) remain, cash: %.2f", len(pf.positions), pf.cash)
@@ -888,9 +1053,10 @@ def raise_cash_if_needed(ctx: RunContext, ranks: list[RankItem]) -> None:
         sell_qty = min(qty, int(math.ceil(need / per_share)))
         if sell_qty <= 0:
             continue
-        if safe_sell(ctx, sym, sell_qty) is None:  # nothing was sent, so the holding stays (ADR-017)
+        got = filled_qty(safe_sell(ctx, sym, sell_qty))
+        if got == 0:  # nothing sent or nothing filled, so the holding stays (ADR-017, ADR-019)
             continue
-        pf.positions[sym] -= sell_qty
+        pf.positions[sym] -= got
         if pf.positions[sym] == 0:
             pf.positions.pop(sym)
             pf.sold.add(sym)
@@ -910,6 +1076,7 @@ def _finish(ctx: RunContext, status: str, equity_after: float) -> None:
     pf = ctx.portfolio
     ctx.artifacts.write_rows("portfolio_after", sorted(pf.positions.items()))
     ctx.artifacts.write_table("trades", TRADE_COLUMNS, pf.trades)
+    ctx.artifacts.write_table("orders", ORDER_COLUMNS, pf.orders)
     ctx.artifacts.record(
         cash_after=pf.cash, equity_after=equity_after, positions_after=dict(sorted(pf.positions.items()))
     )
@@ -1041,13 +1208,15 @@ def run(ctx: RunContext) -> None:
                 row["decision"] = "SKIP:no_cash"
                 continue
 
-            if safe_buy(ctx, r.symbol, affordable_qty) is not None:
-                pf.positions[r.symbol] = affordable_qty
+            fill = safe_buy(ctx, r.symbol, affordable_qty)
+            got = filled_qty(fill)
+            if got:
+                pf.positions[r.symbol] = got  # what filled, not what was asked (ADR-019)
                 # update for subsequent picks
                 account_equity = pf.cash + live_value(ctx)
-                row.update(decision="BUY", cash_after=pf.cash)
+                row.update(decision="BUY" if got == affordable_qty else "BUY:partial", cash_after=pf.cash)
             else:
-                row["decision"] = "SKIP:not_placed"
+                row["decision"] = "SKIP:not_placed" if fill is None else "SKIP:no_fill"
     else:
         logger.info("No new buys – bear regime or no cash.")
     art.write_table("candidates", CANDIDATE_COLUMNS, candidates)

@@ -8,8 +8,8 @@ risk-adjusted momentum, gates new entries on the index trend, sizes positions
 by ATR, trades through Zerodha Kite Connect, and keeps CSV ledgers of the
 portfolio, cash and trades.
 
-> Research code. Real-money use needs broker-confirmed fills, order-state
-> handling and retries beyond what is implemented here.
+> Research code, run with care. Fills are confirmed against the broker before
+> they are booked (ADR-019); everything else about real-money use is on you.
 
 ## Requirements
 
