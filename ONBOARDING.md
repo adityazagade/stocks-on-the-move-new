@@ -108,7 +108,7 @@ behind each step.
 | 8 | Raise cash | `raise_cash_if_needed` | Only when a withdrawal drove cash negative |
 | 9 | Resize | `resize_positions`, `target_shares` | Even ISO weeks only, or `FORCE_RESIZE=1` |
 | 10 | Mark to market | `live_value` | Batched `ltp()` |
-| 11 | Buys | `target_shares`, `safe_buy` | Bull regime and cash > 0 only |
+| 11 | Buys | `target_shares`, `safe_buy` | Bull regime and cash > 0 only. Every order waits for the broker's verdict (`await_fill`, ADR-019) and books what filled |
 | 12 | Snapshot | `write_portfolio` | Writes `OUT_FILE`; the human promotes it to `PORTFOLIO_FILE` |
 
 ### Filters and scoring (step 6)
@@ -182,10 +182,20 @@ The two ledgers are the source of truth for cash, which means:
   process starts with it set, so never leave it in `.env`,
 - if you change `STARTING_CASH` you change the meaning of every historical row.
 
+**A trade is booked only after the broker confirms the fill** (ADR-019).
+`_place` sends the order, keeps the id, and `await_fill` polls the status
+until it is `COMPLETE`, `REJECTED` or `CANCELLED`, cancelling at the timeout.
+What reaches the ledger and the portfolio is the filled quantity at the
+broker's average price, never the requested quantity at the price seen. A
+`Fill` with zero filled means the order was sent and came to nothing; `None`
+from `safe_buy` or `safe_sell` means nothing was sent at all.
+
 **Fees and slippage are booked at trade time.** `record_trade` debits
-`price * (1 + FEES_PCT + SLIPPAGE_PCT)` on buys and credits
-`price * (1 - FEES_PCT - SLIPPAGE_PCT)` on sells. The ledger is the model of
-the account, not a broker statement.
+`price * (1 + FEES_PCT + slippage)` on buys and credits
+`price * (1 - FEES_PCT - slippage)` on sells, where `slippage` is
+`SLIPPAGE_PCT` for a paper fill and zero for a live one, whose average price
+already contains it. The ledger is the model of the account, not a broker
+statement.
 
 **Order type depends on the NSE series.** Plain `EQ` names use market orders
 priced from a batched `ltp()`. Series in `NO_MARKET_SERIES` (`BE`, `BZ`,
@@ -227,15 +237,17 @@ work.
 | File | Written by | Read by | Notes |
 | --- | --- | --- | --- |
 | `current_portfolio.csv` | you | step 2 | `SYMBOL,QUANTITY`, no header |
-| `next_portfolio.csv` | step 12 | you | Copy over `current_portfolio.csv` once fills are confirmed |
+| `next_portfolio.csv` | step 12 | you | Copy over `current_portfolio.csv`; it already holds the fills the broker confirmed (ADR-019) |
 | `cash_ledger.csv` | you, or `ENV_CASHFLOW` | step 2 | `date,amount,note` |
-| `trades_ledger.csv` | every `safe_buy` / `safe_sell` | step 2 | Append-only |
+| `trades_ledger.csv` | every confirmed fill | step 2 | Append-only; filled quantity and the broker's average price (ADR-019) |
 | `.cache_candles/<token>.csv` | `CandleStore` | `CandleStore` | `date,open,high,low,close,volume`; git-ignored, safe to delete |
-| `runs/<date>/<time>-<mode>/` | every step, as it completes | you | Ten files per run (ADR-006); git-ignored; `runs/latest` is a symlink to the newest |
+| `runs/<date>/<time>-<mode>/` | every step, as it completes | you | Eleven files per run (ADR-006; `orders.csv` since ADR-019); git-ignored; `runs/latest` is a symlink to the newest |
 
-The gap between step 12 and the next run's step 2 is deliberate: the script
-assumes every order filled at the price it used. Confirming fills against the
-broker and correcting `current_portfolio.csv` is a manual step today.
+The gap between step 12 and the next run's step 2 is deliberate: promoting
+the snapshot is a human act. Since ADR-019 the snapshot records what the
+broker confirmed filled, at the broker's average price, so comparing it with
+the Kite positions page is a check, not a correction. `orders.csv` in the run
+directory has every order id and its verdict if the two disagree.
 
 ## 6. How we work
 
@@ -290,12 +302,26 @@ an exception, a sizing error, a rate-limit backoff); INFO for decisions and
 totals; DEBUG for per-call detail; never a token, a secret or a Kite response
 body. `LOG_LEVEL=DEBUG` gives a verbose console for a live investigation.
 
+**Fills are confirmed, not assumed** (ADR-019). Every order waits, inside
+`safe_buy` or `safe_sell`, until the broker reports it `COMPLETE`, `REJECTED`
+or `CANCELLED`, polling every `FILL_POLL_SECONDS` for up to
+`FILL_TIMEOUT_SECONDS` (default two minutes); past that the order is
+cancelled and whatever filled is booked. The ledger row carries the filled
+quantity and the broker's average price, with `slippage_pct` zero for a live
+fill because the average already contains it; paper rows keep the configured
+estimate. A partial fill moves the position by what filled and shows as
+`SELL:partial` or `BUY:partial` in the run's tables; a rejection books
+nothing and shows as `SKIP:no_fill` with the broker's message in
+`orders.csv`. A live run with a few limit orders on `BE` names can therefore
+take minutes longer than a paper run, which waits for nothing.
+
 **Tests.** `tests/test_settings.py` covers parsing, ranges and the generated
 `.env.example`. `tests/test_kite_auth.py` covers the login module against a
 fake client. `tests/test_momentum.py` covers the pure helpers: symbol parsing,
 portfolio CSV round-trips, fee arithmetic, ATR and the momentum score.
 `tests/test_broker.py` covers the Kite adapter's mapping and backoff and the
-paper wrapper; `tests/test_candles.py` the cache paths; `tests/test_artifacts.py`
+paper wrapper; `tests/test_fills.py` the wait for a fill, the booking rules and
+the five places a position follows a fill (ADR-019); `tests/test_candles.py` the cache paths; `tests/test_artifacts.py`
 the run directory; `tests/test_golden.py` is the golden-file regression test
 (below); `tests/test_pipeline.py`
 everything above the helpers, including whole `run(ctx)` calls in bull, bear
@@ -346,15 +372,10 @@ ledger rows (fees, starting cash) deserves a note in the commit body.
 ## 7. Known rough edges
 
 Things we know about and have not fixed. Each one needs an ADR before the
-fix; see `docs/adr/`. The six items this list carried in September 2026 are
-closed by ADR-005, 006, 008, 015, 016, 017 and 018, which still refer to
-them by their old numbers.
-
-1. **Limit-order fills are assumed.** A LIMIT order on a `BE`/`BZ` name may
-   never fill, but once the broker accepts it the ledger and the portfolio
-   snapshot are updated as if it did. Fixing this needs order-status
-   polling against the broker after the order, and a rule for what to do
-   with a partial fill.
+fix; see `docs/adr/`. Nothing is open at the moment. The six items this list
+carried in September 2026 are closed by ADR-005, 006, 008, 015, 016, 017, 018
+and 019, which still refer to them by their old numbers; the last to close,
+"limit-order fills are assumed", went with ADR-019's broker-confirmed fills.
 
 ## 8. Glossary
 

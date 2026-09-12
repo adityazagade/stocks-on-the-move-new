@@ -30,7 +30,7 @@ from stocks_on_the_move.candles import CandleStore
 
 GOLDEN = Path(__file__).parent / "fixtures" / "golden"
 EXPECTED = GOLDEN / "expected"
-TABLES = ["universe.csv", "ranking.csv", "exits.csv", "sizing.csv", "candidates.csv", "trades.csv"]
+TABLES = ["universe.csv", "ranking.csv", "exits.csv", "sizing.csv", "candidates.csv", "trades.csv", "orders.csv"]
 HEADERLESS = ["portfolio_after.csv"]
 
 

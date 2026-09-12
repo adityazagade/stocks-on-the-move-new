@@ -26,6 +26,12 @@ def rank(symbol: str, *, close: float = 100.0, ema100: float = 90.0) -> m.RankIt
     return m.RankItem(symbol, 0.5, 0.3, 0.9, close, ema100)
 
 
+def booked(fill: m.Fill | None) -> float:
+    """The price a trade was booked at; fails the test when nothing was sent (ADR-019)."""
+    assert fill is not None
+    return fill.price
+
+
 # ── prices and tokens ────────────────────────────────────────────────────
 
 
@@ -55,7 +61,7 @@ def test_market_buy_books_the_trade_the_cash_and_the_ledger_row(ctx):
     ctx.broker.ltps["NSE:TCS"] = 100.0
     ctx.portfolio.cash = 10_000.0
 
-    assert m.safe_buy(ctx, "TCS", 10) == 100.0
+    assert booked(m.safe_buy(ctx, "TCS", 10)) == 100.0
 
     assert ctx.broker.orders == [Order("TCS", "BUY", 10, "MARKET")]
     friction = ctx.settings.fees_pct + ctx.settings.slippage_pct
@@ -80,7 +86,7 @@ def test_market_sell_credits_cash_net_of_friction(ctx):
     m.init_cash_balance(ctx)
     ctx.broker.ltps["NSE:TCS"] = 100.0
     ctx.portfolio.cash = 0.0
-    assert m.safe_sell(ctx, "TCS", 10) == 100.0
+    assert booked(m.safe_sell(ctx, "TCS", 10)) == 100.0
     assert ctx.broker.orders == [Order("TCS", "SELL", 10, "MARKET")]
     friction = ctx.settings.fees_pct + ctx.settings.slippage_pct
     assert ctx.portfolio.cash == pytest.approx(1_000 * (1 - friction))
@@ -91,9 +97,9 @@ def test_no_market_series_trade_with_limit_orders_at_the_top_of_the_book(ctx):
     ctx.broker.quotes["NSE:IDEA-BE"] = Quote(last_price=10.0, best_bid=9.9, best_ask=10.1)
     ctx.broker.quotes["NSE:THIN-BZ"] = Quote(last_price=5.0, best_bid=None, best_ask=None)
 
-    assert m.safe_buy(ctx, "IDEA-BE", 100) == 10.1
-    assert m.safe_sell(ctx, "IDEA-BE", 100) == 9.9
-    assert m.safe_sell(ctx, "THIN-BZ", 10) == 5.0  # empty book: last price
+    assert booked(m.safe_buy(ctx, "IDEA-BE", 100)) == 10.1
+    assert booked(m.safe_sell(ctx, "IDEA-BE", 100)) == 9.9
+    assert booked(m.safe_sell(ctx, "THIN-BZ", 10)) == 5.0  # empty book: last price
 
     assert ctx.broker.orders == [
         Order("IDEA-BE", "BUY", 100, "LIMIT", limit_price=10.1),
@@ -445,6 +451,7 @@ def test_run_writes_the_whole_artifact_set(make_context, caplog):
     assert sorted(p.name for p in path.iterdir()) == [
         "candidates.csv",
         "exits.csv",
+        "orders.csv",
         "portfolio_after.csv",
         "portfolio_before.csv",
         "ranking.csv",
@@ -472,6 +479,12 @@ def test_run_writes_the_whole_artifact_set(make_context, caplog):
     assert float(candidates["AAA"]["cash_after"]) > float(candidates["BBB"]["cash_after"])
 
     assert read_table(path / "trades.csv") == ledger_rows(ctx.settings.trades_ledger_file)
+    orders = read_table(path / "orders.csv")
+    assert [(o["symbol"], o["side"], o["status"]) for o in orders] == [
+        ("AAA", "BUY", "COMPLETE"),
+        ("BBB", "BUY", "COMPLETE"),
+    ]
+    assert [o["filled_qty"] for o in orders] == [t["qty"] for t in read_table(path / "trades.csv")]
     assert (path / "exits.csv").read_text() == ",".join(m.EXIT_COLUMNS) + "\n"  # no holdings to judge
     assert (path / "sizing.csv").read_text() == ",".join(m.SIZING_COLUMNS) + "\n"  # nothing to resize
     assert (path / "portfolio_before.csv").read_text() == ""

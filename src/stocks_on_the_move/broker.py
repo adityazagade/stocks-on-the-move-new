@@ -1,14 +1,15 @@
 """The broker boundary (ADR-008).
 
 ``Broker`` is the whole of what the strategy asks of the outside world:
-instruments, last prices, quotes with depth, daily candles, orders, and the
-profile check the login uses. Results are our own small types, never raw Kite
-dicts. ``KiteBroker`` adapts ``KiteConnect`` to the protocol and owns the
-request spacing, the jittered backoff on "too many requests" and the retry
-limit that ``kite_call`` used to have; after the last retry it raises
-``BrokerError`` instead of returning ``None``. ``PaperBroker`` wraps any broker,
-delegates every read and turns ``place_order`` into a log line. Tests use
-``tests/fakes.FakeBroker``.
+instruments, last prices, quotes with depth, daily candles, orders, what
+became of an order and its cancellation (ADR-019), and the profile check the
+login uses. Results are our own small types, never raw Kite dicts.
+``KiteBroker`` adapts ``KiteConnect`` to the protocol and owns the request
+spacing, the jittered backoff on "too many requests" and the retry limit that
+``kite_call`` used to have; after the last retry it raises ``BrokerError``
+instead of returning ``None``. ``PaperBroker`` wraps any broker, delegates
+every read, turns ``place_order`` into a log line and reports every paper
+order filled in full on the first poll. Tests use ``tests/fakes.FakeBroker``.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from __future__ import annotations
 import logging
 import random
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal, Protocol, TypedDict
@@ -80,6 +81,31 @@ class Order:
             raise ValueError("a MARKET order takes no limit_price")
 
 
+# The statuses after which the broker will not change an order again (ADR-019).
+TERMINAL_STATUSES = frozenset({"COMPLETE", "REJECTED", "CANCELLED"})
+
+
+@dataclass(frozen=True)
+class OrderStatus:
+    """What the broker says became of an order (ADR-019).
+
+    ``status`` keeps Kite's spelling: ``COMPLETE``, ``REJECTED``, ``CANCELLED``,
+    ``OPEN`` and the interim states. These six fields are all the strategy ever
+    reads of the broker's answer, and all it ever logs.
+    """
+
+    order_id: str
+    status: str
+    filled_quantity: int
+    pending_quantity: int
+    average_price: float  # 0 until something filled
+    status_message: str | None = None
+
+    @property
+    def terminal(self) -> bool:
+        return self.status in TERMINAL_STATUSES
+
+
 class Broker(Protocol):
     def instruments(self, exchange: str) -> list[Instrument]: ...
 
@@ -95,6 +121,14 @@ class Broker(Protocol):
         """Returns the broker's order id."""
         ...
 
+    def order_status(self, order_id: str) -> OrderStatus:
+        """The order's latest state; ``terminal`` once the broker will not change it again."""
+        ...
+
+    def cancel_order(self, order_id: str) -> None:
+        """Cancel a regular order that has not (fully) filled."""
+        ...
+
     def profile(self) -> dict[str, Any]: ...
 
 
@@ -104,6 +138,19 @@ class Broker(Protocol):
 def _is_rate_limit(exc: Exception) -> bool:
     msg = str(exc).lower()
     return "too many requests" in msg or "429" in msg
+
+
+def _order_status_from(order_id: str, row: Mapping[str, Any]) -> OrderStatus:
+    """Our ``OrderStatus`` from one entry of Kite's order history; nothing else is read."""
+    message = row.get("status_message")
+    return OrderStatus(
+        order_id=order_id,
+        status=str(row.get("status") or "UNKNOWN").upper(),
+        filled_quantity=int(row.get("filled_quantity") or 0),
+        pending_quantity=int(row.get("pending_quantity") or 0),
+        average_price=float(row.get("average_price") or 0.0),
+        status_message=str(message) if message else None,
+    )
 
 
 class KiteBroker:
@@ -243,6 +290,15 @@ class KiteBroker:
             kwargs["validity"] = k.VALIDITY_DAY
         return str(self.call(k.place_order, **kwargs))
 
+    def order_status(self, order_id: str) -> OrderStatus:
+        history = self.call(self._kite.order_history, order_id)
+        if not history:  # not yet visible to the order book; the caller polls again
+            return OrderStatus(order_id, "UNKNOWN", 0, 0, 0.0)
+        return _order_status_from(order_id, history[-1])
+
+    def cancel_order(self, order_id: str) -> None:
+        self.call(self._kite.cancel_order, self._kite.VARIETY_REGULAR, order_id)
+
     def profile(self) -> dict[str, Any]:
         return dict(self.call(self._kite.profile))
 
@@ -251,11 +307,18 @@ class KiteBroker:
 # Paper trading
 # ═════════════════════════════════════════════════════════════════════════
 class PaperBroker:
-    """Every read goes to the wrapped broker; ``place_order`` is recorded and logged, never sent."""
+    """Every read goes to the wrapped broker; ``place_order`` is recorded and logged, never sent.
+
+    A paper order is deemed filled in full the moment it is placed: at its limit
+    price, or at the wrapped broker's last price for a MARKET order (ADR-019).
+    ``order_status`` reports that on the first poll, so a paper run waits for
+    nothing; ``cancel_order`` has nothing to cancel.
+    """
 
     def __init__(self, inner: Broker) -> None:
         self._inner = inner
         self.orders: list[Order] = []
+        self._fills: dict[str, tuple[Order, float]] = {}  # order id -> (the order, the price it filled at)
 
     def instruments(self, exchange: str) -> list[Instrument]:
         return self._inner.instruments(exchange)
@@ -272,8 +335,21 @@ class PaperBroker:
     def place_order(self, order: Order) -> str:
         self.orders.append(order)
         order_id = f"PAPER-{len(self.orders):04d}"
+        if order.limit_price is not None:
+            price = order.limit_price
+        else:
+            key = f"{order.exchange}:{order.symbol}"
+            price = self._inner.ltp([key]).get(key, 0.0)
+        self._fills[order_id] = (order, price)
         logger.debug("Paper order %s not sent: %s", order_id, order)
         return order_id
+
+    def order_status(self, order_id: str) -> OrderStatus:
+        order, price = self._fills[order_id]
+        return OrderStatus(order_id, "COMPLETE", order.quantity, 0, price)
+
+    def cancel_order(self, order_id: str) -> None:
+        logger.debug("Paper cancel %s: nothing was sent, nothing to cancel", order_id)
 
     def profile(self) -> dict[str, Any]:
         return self._inner.profile()

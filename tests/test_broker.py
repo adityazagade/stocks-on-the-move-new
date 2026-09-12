@@ -1,4 +1,4 @@
-"""Tests for the broker boundary: Kite adapter mapping, backoff, paper wrapper (ADR-008)."""
+"""Tests for the broker boundary: Kite adapter mapping, backoff, paper wrapper (ADR-008, ADR-019)."""
 
 from __future__ import annotations
 
@@ -8,11 +8,20 @@ import pytest
 from kiteconnect.exceptions import NetworkException, TokenException
 
 from fakes import FakeBroker
-from stocks_on_the_move.broker import BrokerError, Instrument, KiteBroker, Order, PaperBroker, Quote
+from stocks_on_the_move.broker import (
+    TERMINAL_STATUSES,
+    BrokerError,
+    Instrument,
+    KiteBroker,
+    Order,
+    OrderStatus,
+    PaperBroker,
+    Quote,
+)
 
 
 class FakeKite:
-    """Just enough of KiteConnect: the constants and the six methods, all scripted."""
+    """Just enough of KiteConnect: the constants and the eight methods, all scripted."""
 
     VARIETY_REGULAR = "regular"
     EXCHANGE_NSE = "NSE"
@@ -27,6 +36,7 @@ class FakeKite:
         self.remaining_429 = rate_limit_first
         self.calls: list[tuple] = []
         self.instrument_downloads = 0
+        self.history: dict[str, list[dict]] = {}  # order id -> the entries order_history returns
 
     def _maybe_429(self):
         if self.remaining_429 > 0:
@@ -69,6 +79,16 @@ class FakeKite:
         self._maybe_429()
         self.calls.append(("place_order", kwargs))
         return 240912000001
+
+    def order_history(self, order_id):
+        self._maybe_429()
+        self.calls.append(("order_history", order_id))
+        return self.history.get(order_id, [])
+
+    def cancel_order(self, variety, order_id, parent_order_id=None):
+        self._maybe_429()
+        self.calls.append(("cancel_order", variety, order_id))
+        return order_id
 
     def profile(self):
         return {"user_id": "AB1234"}
@@ -220,6 +240,69 @@ def test_profile_is_a_plain_dict():
     assert b.profile() == {"user_id": "AB1234"}
 
 
+# ── order status and cancellation (ADR-019) ──────────────────────────────
+
+
+def test_order_status_is_terminal_only_for_the_three_final_states():
+    assert {"COMPLETE", "REJECTED", "CANCELLED"} == TERMINAL_STATUSES
+    for status in ("COMPLETE", "REJECTED", "CANCELLED"):
+        assert OrderStatus("1", status, 0, 0, 0.0).terminal
+    for status in ("OPEN", "PUT ORDER REQ RECEIVED", "VALIDATION PENDING", "TRIGGER PENDING", "UNKNOWN"):
+        assert not OrderStatus("1", status, 0, 0, 0.0).terminal
+
+
+def test_order_status_reads_the_latest_history_entry_and_only_the_named_fields():
+    kite = FakeKite()
+    kite.history["240912000001"] = [
+        {"status": "PUT ORDER REQ RECEIVED", "filled_quantity": 0, "pending_quantity": 10, "average_price": 0},
+        {"status": "OPEN", "filled_quantity": 4, "pending_quantity": 6, "average_price": 99.5},
+        {
+            "status": "COMPLETE",
+            "filled_quantity": 10,
+            "pending_quantity": 0,
+            "average_price": 99.75,
+            "status_message": None,
+            "tag": "not read",
+        },
+    ]
+    b, _ = broker(kite)
+    status = b.order_status("240912000001")
+    assert status == OrderStatus("240912000001", "COMPLETE", 10, 0, 99.75, None)
+    assert status.terminal
+    assert kite.calls[-1] == ("order_history", "240912000001")
+
+
+def test_order_status_keeps_the_rejection_message_and_tolerates_missing_fields():
+    kite = FakeKite()
+    kite.history["1"] = [{"status": "REJECTED", "status_message": "Insufficient funds", "average_price": None}]
+    kite.history["2"] = [{"status": "open"}]
+    b, _ = broker(kite)
+    assert b.order_status("1") == OrderStatus("1", "REJECTED", 0, 0, 0.0, "Insufficient funds")
+    assert b.order_status("2") == OrderStatus("2", "OPEN", 0, 0, 0.0, None)
+
+
+def test_order_status_with_no_history_yet_is_unknown_not_terminal():
+    b, _ = broker(FakeKite())
+    status = b.order_status("fresh")
+    assert status == OrderStatus("fresh", "UNKNOWN", 0, 0, 0.0)
+    assert not status.terminal
+
+
+def test_cancel_order_speaks_kite_vocabulary_and_goes_through_the_wrapper():
+    kite = FakeKite(rate_limit_first=1)
+    b, sleeps = broker(kite, retries=3, interval=0.0)
+    b.cancel_order("240912000001")
+    assert kite.calls[-1] == ("cancel_order", "regular", "240912000001")
+    assert len(sleeps) == 1  # one backoff for the one 429
+
+
+def test_order_status_backs_off_like_every_other_call():
+    kite = FakeKite(rate_limit_first=99)
+    b, _ = broker(kite, retries=2, interval=0.0)
+    with pytest.raises(BrokerError):
+        b.order_status("1")
+
+
 # ── PaperBroker ──────────────────────────────────────────────────────────
 
 
@@ -236,3 +319,16 @@ def test_paper_broker_delegates_reads_and_swallows_orders(caplog):
     assert paper.orders == [order, order]
     assert inner.orders == []  # never reached the real broker
     assert "not sent" in caplog.text
+
+
+def test_paper_broker_fills_every_order_in_full_on_the_first_poll():
+    inner = FakeBroker(ltp={"NSE:TCS": 100.0})
+    paper = PaperBroker(inner)
+    market = paper.place_order(Order("TCS", "BUY", 3, "MARKET"))
+    limit = paper.place_order(Order("IDEA-BE", "SELL", 50, "LIMIT", limit_price=9.9))
+
+    assert paper.order_status(market) == OrderStatus(market, "COMPLETE", 3, 0, 100.0)
+    assert paper.order_status(limit) == OrderStatus(limit, "COMPLETE", 50, 0, 9.9)
+    assert ("ltp", ["NSE:TCS"]) in inner.calls  # the market fill is the wrapped broker's last price
+    paper.cancel_order(market)  # nothing to cancel, nothing raised
+    assert inner.calls[-1] == ("ltp", ["NSE:TCS"])  # and nothing reached the wrapped broker
