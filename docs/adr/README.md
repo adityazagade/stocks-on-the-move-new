@@ -10,6 +10,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-003](ADR-003-dependency-version-policy-and-pandas-3-hold.md) | Dependency version policy and the pandas 3 hold | Implemented | 2026-09-12 |
 | [ADR-004](ADR-004-track-account-ledgers-in-git.md) | Track the account ledgers in git | Implemented | 2026-09-12 |
 | [ADR-005](ADR-005-kite-session-cache-and-local-redirect-capture.md) | Cache the Kite session and capture the login redirect locally | Accepted | 2026-09-12 |
+| [ADR-007](ADR-007-typed-settings-object.md) | Replace module-level os.getenv calls with a typed settings object | Accepted | 2026-09-12 |
 
 ## Writing a new ADR
 
