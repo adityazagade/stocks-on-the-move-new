@@ -12,6 +12,7 @@ from fakes import FakeBroker, trending_closes
 from stocks_on_the_move import logging_setup as ls
 from stocks_on_the_move import momentum as m
 from stocks_on_the_move.broker import KiteBroker, PaperBroker
+from stocks_on_the_move.ledger import init_cash_balance
 from stocks_on_the_move.settings import Settings
 from test_pipeline import DRIFTS, TODAY, bull_market
 
@@ -63,7 +64,7 @@ def test_a_swallowed_ranking_error_is_a_warning_naming_symbol_and_type(make_cont
 
 def test_a_size_error_in_resize_is_a_warning(make_context, caplog):
     ctx = make_context()
-    m.init_cash_balance(ctx)
+    init_cash_balance(ctx)
     ctx.portfolio.positions = {"GHOST": 5}  # no instrument, no candles: size_position raises
     with caplog.at_level(logging.WARNING, logger="stocks_on_the_move.momentum"):
         m.resize_positions(ctx, bull=True)

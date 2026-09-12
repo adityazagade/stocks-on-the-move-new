@@ -27,6 +27,7 @@ from stocks_on_the_move import momentum as m
 from stocks_on_the_move.artifacts import RunArtifacts
 from stocks_on_the_move.broker import Candle, Instrument, Quote
 from stocks_on_the_move.candles import CandleStore
+from stocks_on_the_move.context import RunContext
 
 GOLDEN = Path(__file__).parent / "fixtures" / "golden"
 EXPECTED = GOLDEN / "expected"
@@ -99,7 +100,7 @@ def test_pipeline_matches_the_golden_files(config, tmp_path, make_settings, upda
     )
     broker = build_broker()
     artifacts = RunArtifacts.create(settings.runs_dir, started=as_of, mode="paper", settings=settings)
-    ctx = m.RunContext(
+    ctx = RunContext(
         settings=settings,
         broker=broker,
         candles=CandleStore(broker, settings.cache_dir, sleep_sec=0.0, sleep=lambda _: None, today=as_of.date),

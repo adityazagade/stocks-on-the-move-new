@@ -173,7 +173,16 @@ that is no longer true. `CLAUDE.md` changes nothing: no rule moves.
 
 ## Implementation Status
 
-Proposed; nothing implemented.
+Accepted on 2026-09-12 by the owner's instruction to implement. In progress.
+
+- **Step 1, the leaves**: `context.py` (the run context, portfolio, fill,
+  token cache, the IST clock), `indicators.py` (the strategy constants,
+  `atr`, `annualise`, `_composite_momentum`), `universe.py` (series codes
+  and parsing, `get_universe`, the NSE archives fetch) and `ledger.py` (the
+  portfolio CSV, both ledgers, cash reconstruction, `record_trade`) carved
+  out of `momentum.py` verbatim; the strategy module imports them back for
+  what it still holds. Tests import the moved names from their new homes.
+  219 tests pass, `ty` is clean, the golden expected files are untouched.
 
 ## Notes
 
