@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     )
     kill_switch: bool = Field(False, description="1 = liquidate everything and exit, ignoring the weekday guard.")
     force_resize: bool = Field(False, description="1 = rebalance position sizes even on an odd ISO week.")
+    plan_only: bool = Field(
+        False,
+        description=(
+            "1 = decide everything, send nothing, write no state: the plan goes to the run directory and the "
+            "console (ADR-022). Wins over ALLOW_KITE_EXECUTION and skips the weekday guard."
+        ),
+    )
 
     # ── Universe and regime ──────────────────────────────────────────────
     index_symbol: str = Field("NIFTY 50", description="Index whose 200-day EMA sets the bull or bear regime.")
@@ -212,7 +219,7 @@ EXAMPLE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "Kite session (ADR-005)",
         ("kite_session_file", "kite_redirect_port", "kite_open_browser", "kite_forget_session"),
     ),
-    ("Safety switches", ("allow_kite_execution", "kill_switch", "force_resize")),
+    ("Safety switches", ("allow_kite_execution", "kill_switch", "force_resize", "plan_only")),
     ("Universe and regime", ("index_symbol", "index_exchange", "use_full_nifty_universe")),
     (
         "Sizing and risk",

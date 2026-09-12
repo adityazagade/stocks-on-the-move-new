@@ -1,32 +1,45 @@
-"""The weekly routine, step by step (ADR-020, ADR-021).
+"""The weekly routine, step by step (ADR-020, ADR-021, ADR-022).
 
-``run(ctx)`` is steps 2 to 12 over an assembled ``RunContext``; each step is a
-function here that decides through the pure rules, trades through
-``execution`` and writes its table through the context's artifacts.
-``gather_snapshots`` is the one place the candle store is read. ``main()`` in
-``momentum.py`` builds the context and calls ``run``.
+``run(ctx)`` is steps 2 to 12 over an assembled ``RunContext``. Each step
+decides through the pure rules into ``TradeIntent``s, hands each to
+``execution.trade``, which runs it through the context's executor and books
+what filled, and writes its table through the context's artifacts. Cash flows
+through the run in order: a step decides on the portfolio the previous step's
+fills left. ``gather_snapshots`` is the one place the candle store is read.
+``main()`` in ``momentum.py`` builds the context and calls ``run``.
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from stocks_on_the_move.broker import Instrument
-from stocks_on_the_move.context import RunContext, build_token_cache, filled_qty, strategy_params, token_of
+from stocks_on_the_move.context import (
+    Fill,
+    RunContext,
+    TradeIntent,
+    build_token_cache,
+    filled_qty,
+    strategy_params,
+    token_of,
+)
 from stocks_on_the_move.execution import (
     ORDER_COLUMNS,
     gross_cost_for_buy,
     live_value,
     ltp_map,
     net_proceeds_for_sell,
-    safe_buy,
-    safe_sell,
+    outcome,
+    trade,
 )
 from stocks_on_the_move.indicators import Snapshot, SnapshotError
 from stocks_on_the_move.ledger import TRADE_COLUMNS, init_cash_balance, read_portfolio, write_portfolio
+from stocks_on_the_move.params import StrategyParams
 from stocks_on_the_move.reporting import (
     CANDIDATE_COLUMNS,
     EXIT_COLUMNS,
@@ -35,7 +48,7 @@ from stocks_on_the_move.reporting import (
     UNIVERSE_COLUMNS,
     ranking_rows,
 )
-from stocks_on_the_move.rules import RankItem, Sizing, evaluate, exit_check, rank, regime, size
+from stocks_on_the_move.rules import ExitCheck, RankItem, Sizing, evaluate, exit_check, rank, regime, size
 from stocks_on_the_move.universe import NseArchives, get_universe
 
 logger = logging.getLogger(__name__)
@@ -96,6 +109,47 @@ def _describe(exc: BaseException) -> str:
     return str(exc) if isinstance(exc, SnapshotError) else f"{type(exc).__name__}: {exc}"
 
 
+def _reference(snap: Snapshot | None) -> float:
+    """The candle close a decision was made at; ``nan`` when the step had none."""
+    return snap.last if snap is not None and not math.isnan(snap.last) else math.nan
+
+
+# ── 7 ▸ exits ────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class ExitDecision:
+    """One holding's verdict at step 7: the rules that fired and the sell they imply, if any."""
+
+    symbol: str
+    qty: int
+    ranked: RankItem | None
+    pct_rank: float
+    check: ExitCheck
+    intent: TradeIntent | None
+
+
+def decide_exits(
+    positions: dict[str, int],
+    ranks: list[RankItem],
+    snapshots: dict[str, Snapshot],
+    params: StrategyParams,
+) -> list[ExitDecision]:
+    """Step 7's decisions, pure: every holding against the exit rules (ADR-022)."""
+    idx = {r.symbol: i for i, r in enumerate(ranks)}
+    rmap = {r.symbol: r for r in ranks}
+    total = len(ranks)
+    decisions: list[ExitDecision] = []
+    for sym, qty in positions.items():
+        ranked = rmap.get(sym)
+        pct = (idx[sym] + 1) / total if sym in idx else 1.0
+        snap = snapshots.get(sym)
+        check = exit_check(snap, ranked, pct, params)
+        intent = None
+        if check.sell:
+            intent = TradeIntent(sym, "SELL", qty, "exit:" + ";".join(check.reasons), _reference(snap))
+        decisions.append(ExitDecision(sym, qty, ranked, pct, check, intent))
+    return decisions
+
+
 def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
     """Sell names that violate exit rules; every holding's verdict goes to exits.csv. Guarded against empty ranking."""
     if not ranks:
@@ -104,53 +158,40 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
         return
 
     pf = ctx.portfolio
-    params = strategy_params(ctx)
     gather_snapshots(ctx, ())  # the run's rank step covered these; a direct call gets them here
     idx = {r.symbol: i for i, r in enumerate(ranks)}
-    rmap = {r.symbol: r for r in ranks}
-    total = len(ranks)
     rows: list[dict[str, Any]] = []
-    for sym, qty in list(pf.positions.items()):
-        ranked = rmap.get(sym)
-        pct = (idx[sym] + 1) / total if sym in idx else 1.0
-        check = exit_check(ctx.snapshots.get(sym), ranked, pct, params)
-        fill = None
+    for d in decide_exits(dict(pf.positions), ranks, ctx.snapshots, strategy_params(ctx)):
         decision = "HOLD"
-        if check.sell:
-            fill = safe_sell(ctx, sym, qty)
-            got = filled_qty(fill)
+        price: float | None = None
+        if d.intent is not None:
+            fill = trade(ctx, d.intent, exit=True)  # even a partial exit bars a buy-back this run
             if fill is None:  # nothing was sent, so nothing changes (ADR-017)
                 logger.warning(
-                    "%s: exit wanted (%s) but no price came back; the holding stays", sym, ";".join(check.reasons)
+                    "%s: exit wanted (%s) but no price came back; the holding stays",
+                    d.symbol,
+                    ";".join(d.check.reasons),
                 )
-                decision = "SKIP:no_price"
-            elif got == 0:  # sent, nothing filled; _place said why (ADR-019)
-                decision = "SKIP:no_fill"
-            else:
-                pf.sold.add(sym)  # even a partial exit bars a buy-back this run
-                if got == qty:
-                    pf.positions.pop(sym)
-                    decision = "SELL"
-                else:
-                    pf.positions[sym] = qty - got
-                    decision = "SELL:partial"
+            decision = outcome(d.intent, fill, not_sent="SKIP:no_price")
+            price = fill.price if fill is not None and fill.filled > 0 else None
         rows.append(
             {
-                "symbol": sym,
-                "qty": qty,
-                "rank": idx[sym] + 1 if sym in idx else None,
-                "pct_rank": pct,
-                "close": ranked.close if ranked else None,
-                "ema100": ranked.ema100 if ranked else None,
-                "stop_level": check.stop_level,
-                "reasons": ";".join(check.reasons),
+                "symbol": d.symbol,
+                "qty": d.qty,
+                "rank": idx[d.symbol] + 1 if d.symbol in idx else None,
+                "pct_rank": d.pct_rank,
+                "close": d.ranked.close if d.ranked else None,
+                "ema100": d.ranked.ema100 if d.ranked else None,
+                "stop_level": d.check.stop_level,
+                "reasons": ";".join(d.check.reasons),
                 "decision": decision,
-                "price": fill.price if fill is not None and fill.filled else None,
+                "price": price,
             }
         )
     ctx.artifacts.write_table("exits", EXIT_COLUMNS, rows)
 
 
+# ── 9 ▸ size rebalance ───────────────────────────────────────────────────
 def resize_positions(ctx: RunContext, bull: bool) -> None:
     """Every even ISO week (IST), rebalance sizes toward ATR targets (cash-aware); verdicts go to sizing.csv."""
     pf = ctx.portfolio
@@ -165,7 +206,8 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
     account_equity = pf.cash + live_value(ctx)
 
     rows: dict[str, dict[str, Any]] = {}
-    to_up, to_down = {}, {}
+    sells: list[TradeIntent] = []
+    buys: list[TradeIntent] = []
     for sym, qty in pf.positions.items():
         try:
             sizing = size_for(ctx, sym, account_equity)
@@ -186,61 +228,41 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
             "action": "BUY" if diff > 0 else "SELL" if diff < 0 else "HOLD",
         }
         if diff > 0:
-            to_up[sym] = diff
+            buys.append(TradeIntent(sym, "BUY", diff, "resize", sizing.price))
         elif diff < 0:
-            to_down[sym] = -diff
+            sells.append(TradeIntent(sym, "SELL", -diff, "resize", sizing.price))
 
     # 1️⃣ sell downs first
-    for sym, delta in to_down.items():
-        fill = safe_sell(ctx, sym, delta)
-        got = filled_qty(fill)
-        if got == 0:  # nothing sent, or nothing filled: the quantity stays (ADR-017, ADR-019)
-            rows[sym]["action"] = "SKIP:not_placed" if fill is None else "SKIP:no_fill"
-            continue
-        if got < delta:
-            rows[sym]["action"] = "SELL:partial"
-        pf.positions[sym] -= got
-        if pf.positions[sym] == 0:
-            pf.positions.pop(sym)
-            pf.sold.add(sym)
+    for intent in sells:
+        fill = trade(ctx, intent)  # the quantity moves by what filled, or not at all (ADR-017, ADR-019)
+        rows[intent.symbol]["action"] = outcome(intent, fill)
 
     if not bull or pf.cash <= 0:
-        for sym in to_up:
-            rows[sym]["action"] = "SKIP:bear" if not bull else "SKIP:no_cash"
+        for intent in buys:
+            rows[intent.symbol]["action"] = "SKIP:bear" if not bull else "SKIP:no_cash"
         ctx.artifacts.write_table("sizing", SIZING_COLUMNS, rows.values())
         return
 
-    prices = ltp_map(ctx.broker, to_up.keys()) if to_up else {}
-    for sym, delta in to_up.items():
-        price = prices.get(sym, 0.0)
-        need = gross_cost_for_buy(ctx.settings, price, delta)
+    prices = ltp_map(ctx.broker, [i.symbol for i in buys]) if buys else {}
+    for intent in buys:
+        price = prices.get(intent.symbol, 0.0)
+        need = gross_cost_for_buy(ctx.settings, price, intent.quantity)
         if need > pf.cash + 1e-6:
-            rows[sym]["action"] = "SKIP:no_cash"
+            rows[intent.symbol]["action"] = "SKIP:no_cash"
             continue
-        fill = safe_buy(ctx, sym, delta)
-        got = filled_qty(fill)
-        if got == 0:
-            rows[sym]["action"] = "SKIP:not_placed" if fill is None else "SKIP:no_fill"
-            continue
-        if got < delta:
-            rows[sym]["action"] = "BUY:partial"
-        pf.positions[sym] = pf.positions.get(sym, 0) + got
+        fill = trade(ctx, intent)
+        rows[intent.symbol]["action"] = outcome(intent, fill)
     ctx.artifacts.write_table("sizing", SIZING_COLUMNS, rows.values())
 
 
+# ── 3.5 ▸ kill switch, 8 ▸ cash for withdrawals ──────────────────────────
 def liquidate_all(ctx: RunContext) -> None:
     """KILL SWITCH: sell every position in the portfolio."""
     pf = ctx.portfolio
     logger.warning("KILL SWITCH activated – liquidating all %d positions", len(pf.positions))
-    unsold: list[str] = []
     for sym, qty in list(pf.positions.items()):
-        got = filled_qty(safe_sell(ctx, sym, qty))
-        if got == qty:
-            pf.positions.pop(sym)
-            continue
-        if got:  # a partial exit leaves the remainder (ADR-019)
-            pf.positions[sym] = qty - got
-        unsold.append(f"{sym} x{qty - got}")  # nothing sent or nothing filled: the holding stays (ADR-017)
+        trade(ctx, TradeIntent(sym, "SELL", qty, "kill_switch", math.nan))
+    unsold = [f"{sym} x{qty}" for sym, qty in pf.positions.items()]  # nothing sent or nothing filled: it stays
     if unsold:
         logger.warning("KILL SWITCH could not sell %d position(s), still held: %s", len(unsold), ", ".join(unsold))
     logger.warning("KILL SWITCH complete – %d position(s) remain, cash: %.2f", len(pf.positions), pf.cash)
@@ -272,14 +294,8 @@ def raise_cash_if_needed(ctx: RunContext, ranks: list[RankItem]) -> None:
         sell_qty = min(qty, int(math.ceil(need / per_share)))
         if sell_qty <= 0:
             continue
-        got = filled_qty(safe_sell(ctx, sym, sell_qty))
-        if got == 0:  # nothing sent or nothing filled, so the holding stays (ADR-017, ADR-019)
-            continue
-        pf.positions[sym] -= got
-        if pf.positions[sym] == 0:
-            pf.positions.pop(sym)
-            pf.sold.add(sym)
-        need = -pf.cash  # update remaining need after cash change
+        trade(ctx, TradeIntent(sym, "SELL", sell_qty, "raise_cash", price))
+        need = -pf.cash  # update remaining need after whatever filled
 
     if pf.cash < 0:
         logger.warning("Could not fully raise cash for withdrawal. Short by %.2f", -pf.cash)
@@ -287,11 +303,13 @@ def raise_cash_if_needed(ctx: RunContext, ranks: list[RankItem]) -> None:
         logger.info("Raised cash for withdrawal. Cash now: %.2f", pf.cash)
 
 
+# ── 11 ▸ new buys ────────────────────────────────────────────────────────
 def buy_candidates(ctx: RunContext, ranks: list[RankItem], bull: bool, account_equity: float) -> None:
     """Step 11: open new positions down the ranking while the regime is bull and cash allows.
 
     Every ranked name visited gets a row in candidates.csv with the decision taken
-    on it. Equity is recomputed after each fill, so later sizes see earlier buys.
+    on it. One intent is decided at a time, because each fill changes the equity
+    the next size is computed from.
     """
     s = ctx.settings
     pf = ctx.portfolio
@@ -336,18 +354,37 @@ def buy_candidates(ctx: RunContext, ranks: list[RankItem], bull: bool, account_e
                 row["decision"] = "SKIP:no_cash"
                 continue
 
-            fill = safe_buy(ctx, r.symbol, affordable_qty)
-            got = filled_qty(fill)
-            if got:
-                pf.positions[r.symbol] = got  # what filled, not what was asked (ADR-019)
-                # update for subsequent picks
-                account_equity = pf.cash + live_value(ctx)
-                row.update(decision="BUY" if got == affordable_qty else "BUY:partial", cash_after=pf.cash)
-            else:
-                row["decision"] = "SKIP:not_placed" if fill is None else "SKIP:no_fill"
+            intent = TradeIntent(r.symbol, "BUY", affordable_qty, "new_position", r.close)
+            fill = trade(ctx, intent)  # the position is what filled, not what was asked (ADR-019)
+            row["decision"] = outcome(intent, fill)
+            if filled_qty(fill):
+                account_equity = pf.cash + live_value(ctx)  # update for subsequent picks
+                row["cash_after"] = pf.cash
     else:
         logger.info("No new buys – bear regime or no cash.")
     ctx.artifacts.write_table("candidates", CANDIDATE_COLUMNS, candidates)
+
+
+# ── the run ──────────────────────────────────────────────────────────────
+def plan_summary(intents: Sequence[tuple[TradeIntent, Fill | None]]) -> str:
+    """One line on what a plan decided: filled intents by reason, and how many had no price or cash."""
+    filled = (intent.reason.split(":", 1)[0] for intent, fill in intents if filled_qty(fill) > 0)
+    by_reason: Counter[str] = Counter(filled)
+    unsent = sum(1 for _, fill in intents if fill is None)
+    parts = ", ".join(f"{n} {reason}" for reason, n in sorted(by_reason.items())) or "nothing to do"
+    tail = f"; {unsent} could not be priced or afforded" if unsent else ""
+    return f"{len(intents)} intent(s): {parts}{tail}"
+
+
+def _write_snapshot(ctx: RunContext) -> None:
+    """Step 12's file, unless this is a plan, which writes no state (ADR-022)."""
+    s = ctx.settings
+    pf = ctx.portfolio
+    if s.plan_only:
+        logger.info("PLAN ONLY – %s not written; it would hold %s", s.out_file, dict(sorted(pf.positions.items())))
+        logger.info("PLAN ONLY – nothing sent, nothing written. %s", plan_summary(pf.intents))
+        return
+    write_portfolio(s.out_file, pf.positions)
 
 
 def _finish(ctx: RunContext, status: str, equity_after: float) -> None:
@@ -386,7 +423,7 @@ def run(ctx: RunContext) -> None:
     # 3.5) KILL SWITCH – liquidate everything and exit
     if s.kill_switch:
         liquidate_all(ctx)
-        write_portfolio(s.out_file, pf.positions)
+        _write_snapshot(ctx)
         logger.warning("KILL SWITCH run finished. Final cash: %.2f", pf.cash)
         _finish(ctx, "completed", equity_after=pf.cash)
         return
@@ -436,7 +473,7 @@ def run(ctx: RunContext) -> None:
     buy_candidates(ctx, ranks, bull, account_equity)
 
     # 12) Write next portfolio snapshot
-    write_portfolio(s.out_file, pf.positions)
+    _write_snapshot(ctx)
     equity_after = pf.cash + live_value(ctx)
     logger.info(
         "Done. Final → Equity: %.0f  | Cash: %.0f  | Holdings: %d",

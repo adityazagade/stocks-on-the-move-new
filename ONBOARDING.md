@@ -59,10 +59,27 @@ uv run pre-commit install    # hooks: ruff, uv-lock, whitespace
 cp .env.example .env         # add KITE_API_KEY / KITE_API_SECRET
 ```
 
-Then do a paper run. Two things to know before you press enter:
+Then look at what a run would do. `PLAN_ONLY=1` logs in, gathers the data,
+decides every step and sends nothing: no order, no ledger row, no
+`next_portfolio.csv`. The plan is in `runs/latest/` (every table, with
+`orders.csv` all `PLANNED`) and on the console, one line per intent and a
+closing summary by reason (ADR-022). It skips the weekday guard, so it works
+any evening, and it wins over `ALLOW_KITE_EXECUTION`:
+
+```sh
+PLAN_ONLY=1 uv run --env-file .env stocks-on-the-move
+```
+
+A plan assumes every intent fills in full at the price it would be sent at,
+so it is an upper bound on what the real run does when a limit order on a
+`BE` name does not fill.
+
+When you want a paper run that books, two things to know before you press
+enter:
 
 - **The weekday guard.** `main()` exits immediately unless today, in IST, is
-  `TRADING_WEEKDAY` (default 2, Wednesday). Override it to today.
+  `TRADING_WEEKDAY` (default 2, Wednesday), the run is a plan, or the kill
+  switch is on. Override it to today.
 - **Paper mode still writes the ledgers.** `ALLOW_KITE_EXECUTION=0` skips
   `place_order` but still appends to the trades ledger and rewrites
   `next_portfolio.csv`. Point those at scratch files or you will corrupt the
@@ -111,16 +128,16 @@ behind each step.
 | 1 | Weekday guard, log in | `main`, `authenticate` | In `main()`, before the login, so a non-trading day costs nothing. `authenticate` returns a `KiteBroker`; paper mode wraps it in `PaperBroker` |
 | 2 | Load state | `read_portfolio`, `init_cash_balance` | First step of `run(ctx)`. Cash is reconstructed from ledgers, never stored |
 | 3 | Token cache | `build_token_cache` | One `instruments("NSE")` call into `ctx.tokens`, then everything is a dict lookup |
-| 3.5 | Kill switch | `liquidate_all` | Sells everything, writes `OUT_FILE`, returns |
+| 3.5 | Kill switch | `liquidate_all` | Sells everything, writes `OUT_FILE`, returns; with `PLAN_ONLY=1` it plans the liquidation and sells nothing |
 | 4 | Universe | `NseArchives.symbols`, or the `UniverseSource` on the context | Public CSVs from NSE archives, no auth, with a last-good copy under `CACHE_DIR` for the day NSE is down (ADR-020); tests inject a `StaticUniverse`. Empty universe aborts the run |
 | 5 | Regime | `index_snapshot`, `regime` | Index close vs 200-day EMA. Only gates buys, never sells |
 | 6 | Rank | `get_universe`, `rank_step` (`gather_snapshots`, `evaluate`, `rank`) | One candle read per instrument and holding into `ctx.snapshots`; filters then scores; see section 4 |
-| 7 | Exits | `prune_portfolio`, `exit_check`, `trailing_stop` | Runs every week, bull or bear |
+| 7 | Exits | `prune_portfolio` (`decide_exits`, then `trade`) | Runs every week, bull or bear |
 | 8 | Raise cash | `raise_cash_if_needed` | Only when a withdrawal drove cash negative |
 | 9 | Resize | `resize_positions`, `size` | Even ISO weeks only, or `FORCE_RESIZE=1` |
 | 10 | Mark to market | `live_value` | Batched `ltp()` |
 | 11 | Buys | `buy_candidates`, `size`, `safe_buy` | Bull regime and cash > 0 only. Every order waits for the broker's verdict (`await_fill`, ADR-019) and books what filled |
-| 12 | Snapshot | `write_portfolio` | Writes `OUT_FILE`; the human promotes it to `PORTFOLIO_FILE` |
+| 12 | Snapshot | `write_portfolio` | Writes `OUT_FILE`; the human promotes it to `PORTFOLIO_FILE`. A plan logs what it would hold instead |
 
 ### Filters and scoring (step 6)
 
@@ -207,13 +224,22 @@ The two ledgers are the source of truth for cash, which means:
   process starts with it set, so never leave it in `.env`,
 - if you change `STARTING_CASH` you change the meaning of every historical row.
 
+**A step decides, the executor trades, the portfolio applies** (ADR-022).
+A step turns its decisions into `TradeIntent`s and hands each to
+`execution.trade`, which runs it through the context's executor and books
+what filled. `BrokerExecutor` sends the order and waits for its verdict;
+`PlanExecutor` sends nothing and reports a full fill at the price the order
+would have gone out at. `Portfolio.apply` is the one place a position
+changes, by what filled and never by what was asked; do not put position
+arithmetic back into a step.
+
 **A trade is booked only after the broker confirms the fill** (ADR-019).
 `_place` sends the order, keeps the id, and `await_fill` polls the status
 until it is `COMPLETE`, `REJECTED` or `CANCELLED`, cancelling at the timeout.
 What reaches the ledger and the portfolio is the filled quantity at the
 broker's average price, never the requested quantity at the price seen. A
 `Fill` with zero filled means the order was sent and came to nothing; `None`
-from `safe_buy` or `safe_sell` means nothing was sent at all.
+from `trade`, `safe_buy` or `safe_sell` means nothing was sent at all.
 
 **Fees and slippage are booked at trade time.** `record_trade` debits
 `price * (1 + FEES_PCT + slippage)` on buys and credits
@@ -267,7 +293,7 @@ work.
 | `trades_ledger.csv` | every confirmed fill | step 2 | Append-only; filled quantity and the broker's average price (ADR-019) |
 | `.cache_candles/<token>.csv` | `CandleStore` | `CandleStore` | `date,open,high,low,close,volume`; git-ignored, safe to delete |
 | `.cache_candles/universe-<name>.txt` | `NseArchives`, on every successful fetch | `NseArchives`, when NSE is unreachable | The last-good constituents list, dated on its first line (ADR-020); git-ignored, safe to delete |
-| `runs/<date>/<time>-<mode>/` | every step, as it completes | you | Eleven files per run (ADR-006; `orders.csv` since ADR-019); git-ignored; `runs/latest` is a symlink to the newest |
+| `runs/<date>/<time>-<mode>/` | every step, as it completes | you | Eleven files per run (ADR-006; `orders.csv` since ADR-019); git-ignored; `runs/latest` is a symlink to the newest. A `-plan` run writes this and nothing else (ADR-022) |
 
 The gap between step 12 and the next run's step 2 is deliberate: promoting
 the snapshot is a human act. Since ADR-019 the snapshot records what the

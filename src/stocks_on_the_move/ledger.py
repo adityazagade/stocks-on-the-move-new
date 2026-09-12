@@ -60,7 +60,7 @@ def append_env_cashflow_if_any(ctx: RunContext) -> None:
         return
     _ensure_csv(s.cash_ledger_file, ["date", "amount", "note"])
     _append_row(s.cash_ledger_file, [ctx.now().date().isoformat(), f"{s.env_cashflow:.2f}", s.cashflow_note])
-    logger.info("Applied ENV_CASHFLOW: %+,.2f (%s)", s.env_cashflow, s.cashflow_note)
+    logger.info("Applied ENV_CASHFLOW: %+.2f (%s)", s.env_cashflow, s.cashflow_note)
 
 
 def cash_from_cash_ledger(path: str) -> float:
@@ -94,10 +94,15 @@ def trades_cash_delta(path: str) -> float:
 def init_cash_balance(ctx: RunContext) -> float:
     """Reconstruct the cash for this run from the ledgers and store it on the portfolio."""
     s = ctx.settings
-    _ensure_csv(s.cash_ledger_file, ["date", "amount", "note"])
-    _ensure_csv(s.trades_ledger_file, TRADE_COLUMNS)
-    append_env_cashflow_if_any(ctx)
-    ledger = cash_from_cash_ledger(s.cash_ledger_file)
+    if s.plan_only:  # a plan counts the cash flow and writes nothing (ADR-022)
+        if abs(s.env_cashflow) >= 1e-9:
+            logger.info("PLAN ONLY – ENV_CASHFLOW %+.2f counted, not written", s.env_cashflow)
+        ledger = cash_from_cash_ledger(s.cash_ledger_file) + s.env_cashflow
+    else:
+        _ensure_csv(s.cash_ledger_file, ["date", "amount", "note"])
+        _ensure_csv(s.trades_ledger_file, TRADE_COLUMNS)
+        append_env_cashflow_if_any(ctx)
+        ledger = cash_from_cash_ledger(s.cash_ledger_file)
     trades = trades_cash_delta(s.trades_ledger_file)
     ctx.portfolio.cash = s.starting_cash + ledger + trades
     logger.info(
@@ -111,9 +116,11 @@ def init_cash_balance(ctx: RunContext) -> float:
 
 
 def record_trade(ctx: RunContext, side: str, symbol: str, qty: int, price: float) -> float:
-    """Write a trade to the trades ledger and update the portfolio's cash.
+    """Write a trade to the trades ledger and return its cash delta (positive when cash increases).
 
-    Returns the cash_delta applied (positive if cash increases).
+    The portfolio is not touched here; ``Portfolio.apply`` takes the delta
+    (ADR-022). In plan mode the row goes to this run's table only, never to
+    the ledger file.
     """
     s = ctx.settings
     if qty <= 0 or price <= 0:
@@ -138,8 +145,8 @@ def record_trade(ctx: RunContext, side: str, symbol: str, qty: int, price: float
         f"{slippage:.6f}",
         f"{cash_delta:.2f}",
     ]
-    _append_row(s.trades_ledger_file, values)
+    if not s.plan_only:
+        _append_row(s.trades_ledger_file, values)
     ctx.portfolio.trades.append(dict(zip(TRADE_COLUMNS, values, strict=True)))
     ctx.artifacts.write_table("trades", TRADE_COLUMNS, ctx.portfolio.trades)
-    ctx.portfolio.cash += cash_delta
     return cash_delta

@@ -2,7 +2,9 @@
 
 ``RunContext`` carries the settings, the broker, the candle store, the clock, the
 portfolio, the token cache and the artifacts sink. ``Portfolio`` is the state a
-run mutates; ``Fill`` is what the broker did with one order (ADR-019).
+run mutates, and ``Portfolio.apply`` the one place a position changes (ADR-022);
+``TradeIntent`` is what a step wants done; ``Fill`` is what the broker did with
+one order (ADR-019).
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from stocks_on_the_move.params import StrategyParams
 from stocks_on_the_move.settings import Settings
 
 if TYPE_CHECKING:
+    from stocks_on_the_move.execution import Executor
     from stocks_on_the_move.universe import UniverseSource
 
 # Timezone: run scheduling and biweekly parity in IST
@@ -61,6 +64,24 @@ def filled_qty(fill: Fill | None) -> int:
     return 0 if fill is None else fill.filled
 
 
+@dataclass(frozen=True)
+class TradeIntent:
+    """What a step wants done, before any order exists (ADR-022).
+
+    ``reason`` is the step's word for it: ``exit:<rules>``, ``raise_cash``,
+    ``resize``, ``new_position``, ``kill_switch``, or ``direct`` for a trade
+    outside any step. ``reference_price`` is the price the decision was made at,
+    a candle close or a live last price; ``nan`` when the step had none. The
+    executor decides the price the order actually goes out at.
+    """
+
+    symbol: str
+    side: Side
+    quantity: int
+    reason: str
+    reference_price: float
+
+
 @dataclass
 class Portfolio:
     """Positions, the cash reconstructed from the ledgers, and the names sold this run."""
@@ -70,6 +91,27 @@ class Portfolio:
     sold: set[str] = field(default_factory=set)
     trades: list[dict[str, Any]] = field(default_factory=list)  # the rows appended to the ledger this run
     orders: list[dict[str, Any]] = field(default_factory=list)  # every order sent this run (ADR-019)
+    intents: list[tuple[TradeIntent, Fill | None]] = field(default_factory=list)  # every intent and its fate
+
+    def apply(self, fill: Fill, cash_delta: float, *, exit: bool = False) -> None:
+        """The one place a position changes (ADR-022): by what filled, never by what was asked.
+
+        A buy adds the filled quantity, a sell removes it and drops the position
+        at zero; a position sold to zero, or any sell made as an ``exit``, marks
+        the symbol sold this run. ``cash_delta`` is what the ledger booked for
+        the fill. A fill of nothing changes nothing.
+        """
+        if fill.filled <= 0:
+            return
+        self.cash += cash_delta
+        held = self.positions.get(fill.symbol, 0)
+        after = held + fill.filled if fill.side == "BUY" else held - fill.filled
+        if after > 0:
+            self.positions[fill.symbol] = after
+        else:
+            self.positions.pop(fill.symbol, None)
+        if fill.side == "SELL" and (exit or after <= 0):
+            self.sold.add(fill.symbol)
 
 
 @dataclass
@@ -84,7 +126,8 @@ class RunContext:
     writes nothing. ``sleep`` is what the wait for a fill sleeps with (ADR-019);
     tests pass a no-op. ``snapshots`` is filled once per run by the pipeline's
     gather step (ADR-021); ``params`` overrides the parameters built from the
-    settings, for a backtest's variants.
+    settings, for a backtest's variants; ``executor`` overrides the one the
+    settings imply, the broker's or the plan's (ADR-022).
     """
 
     settings: Settings
@@ -99,6 +142,7 @@ class RunContext:
     sleep: Callable[[float], None] = time.sleep
     snapshots: dict[str, Snapshot] = field(default_factory=dict)  # symbol -> what the rules read (ADR-021)
     params: StrategyParams | None = None
+    executor: Executor | None = None
 
 
 def strategy_params(ctx: RunContext) -> StrategyParams:
