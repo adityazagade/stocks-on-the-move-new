@@ -86,6 +86,9 @@ uv add --dev <package>        # dev-only dependency
 uv lock --upgrade && uv sync  # refresh everything within the pyproject bounds
 ```
 
+Dependabot opens one grouped pull request per ecosystem every Monday
+(`.github/dependabot.yml`, ADR-013); merging is by hand with CI green.
+
 Every change beyond a typo starts with an Architecture Decision Record in
 `docs/adr/`. ADR-001 describes the process.
 

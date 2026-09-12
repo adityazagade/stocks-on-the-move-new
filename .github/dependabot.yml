@@ -1,0 +1,50 @@
+# Automated dependency refresh (ADR-013). One grouped pull request per ecosystem per
+# week, on Monday, so it is reviewed before Wednesday's run. Merging is always by hand,
+# with CI (ADR-011) green and the changelogs of pandas and kiteconnect read. The version
+# bounds in pyproject.toml are the policy: a major bump is never proposed here (ADR-003).
+# Commits carry the ADR number like every other implementation commit (ADR-001).
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ADR-013"
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ADR-013"
+    open-pull-requests-limit: 3
+
+  # Hook revisions. ty's rev must equal the ty pin in the uv group and ruff's rev should
+  # track the ruff dev dependency, so merge those two ecosystems' pull requests together.
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    groups:
+      hooks:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ADR-013"
+    open-pull-requests-limit: 3

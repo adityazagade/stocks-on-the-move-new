@@ -241,10 +241,25 @@ disagree. Use `uv add` / `uv add --dev` / `uv remove`, never `pip`.
 `uv lock --upgrade && uv sync` refreshes within the bounds in
 `pyproject.toml`. pandas is held below 3.0 on purpose: 3.x changes
 copy-on-write and string-dtype defaults and the strategy math has not been
-re-validated against it.
+re-validated against it. Dependabot (ADR-013) proposes the refresh for you:
+every Monday one grouped pull request per ecosystem (`uv`, `github-actions`,
+`pre-commit`), commit subjects prefixed `ADR-013:`. Merge by hand, only with
+CI green and the pandas and kiteconnect changelogs read; never auto-merge. The
+ty hook `rev` must equal the `ty` pin in the dev group and the ruff `rev`
+should track the ruff dev dependency, so merge the `uv` and `pre-commit` pull
+requests together when both touch those.
 
 **Lint and format.** ruff, configured in `pyproject.toml`, 120-column lines,
 rule sets E/W/F/I/UP/B/C4/SIM. `archive/` is excluded and must stay that way.
+
+**Secret scanning.** gitleaks runs on every commit and in CI (ADR-012) with the
+default rules plus `.gitleaks.toml`, which names this project's credentials:
+a `KITE_API_KEY` or `KITE_API_SECRET` with a value, or an `access_token` in a
+session file. Findings are redacted. `.env.example`, `docs/adr/` and this file
+are the only allowlisted paths; a false positive on test data gets a
+fingerprint in `.gitleaksignore` with a comment, never a wider allowlist.
+`detect-private-key` runs alongside. A secret pasted into a chat or a log is
+outside what scanning can catch: rotate it.
 
 **Type checking.** ty (ADR-010), pinned exactly in the dev group and at the
 same version in `.pre-commit-config.yaml`; `uv run ty check` checks `src/` and

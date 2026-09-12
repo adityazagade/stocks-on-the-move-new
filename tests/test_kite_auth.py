@@ -23,7 +23,7 @@ from kiteconnect.exceptions import TokenException
 
 from stocks_on_the_move import kite_auth as ka
 
-TOKEN = "tok123456abcdef"
+TOKEN = "requesttoken0001"  # low entropy on purpose: it must not look like a secret to gitleaks
 REDIRECT_QUERY = f"?request_token={TOKEN}&action=login&status=success"
 
 

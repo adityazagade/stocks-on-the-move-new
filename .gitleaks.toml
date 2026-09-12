@@ -1,0 +1,34 @@
+# Secret scanning rules (ADR-012). gitleaks runs as a pre-commit hook and in CI.
+# The default rules catch high-entropy strings; the rules below catch this
+# project's low-entropy credentials by the names next to them.
+title = "stocks-on-the-move"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "kite-credential-assignment"
+description = "Kite Connect API key or secret assigned a value"
+# The environment form only (KITE_API_KEY=..., as in .env, a shell, a run configuration or
+# YAML), upper case: a Python annotation or keyword argument uses the lower-case field name.
+# Six characters, not eight: a real Kite API key is that short.
+regex = '''\bKITE_API_(?:KEY|SECRET)\s*=\s*["']?([^\s"',#]{6,})["']?'''
+secretGroup = 1
+keywords = ["KITE_API_KEY", "KITE_API_SECRET"]
+
+[[rules]]
+id = "kite-access-token-json"
+description = "Kite access token in a session file (ADR-005 record shape)"
+regex = '''"access_token"\s*:\s*"([^"\s]{8,})"'''
+secretGroup = 1
+keywords = ["access_token"]
+
+# Files that name the variables without carrying values. Nothing else is allowlisted;
+# a false positive on test data gets a fingerprint in .gitleaksignore with a comment.
+[allowlist]
+description = "documentation and the example environment file"
+paths = [
+  '''^\.env\.example$''',
+  '''^docs/adr/.*\.md$''',
+  '''^ONBOARDING\.md$''',
+]
