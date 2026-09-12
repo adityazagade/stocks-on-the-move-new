@@ -18,6 +18,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-011](ADR-011-continuous-integration-on-github-actions.md) | Continuous integration on GitHub Actions | Implemented | 2026-09-12 |
 | [ADR-012](ADR-012-secret-scanning-in-pre-commit.md) | Secret scanning in pre-commit and CI | Implemented | 2026-09-12 |
 | [ADR-013](ADR-013-automated-dependency-refresh.md) | Automated dependency refresh with Dependabot | Accepted | 2026-09-12 |
+| [ADR-014](ADR-014-claude-md-assistant-contract.md) | A CLAUDE.md contract for coding assistants | Accepted | 2026-09-12 |
 
 ## Writing a new ADR
 
