@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
+import os
 import shutil
 from datetime import date
 from pathlib import Path
@@ -32,6 +34,8 @@ def replay(tmp_path, make_settings):
     for f in (GOLDEN / "candles").glob("*.csv"):
         shutil.copy(f, cache / f.name)
     shutil.copy(GOLDEN / "instruments.csv", cache / bt.INSTRUMENTS_FILE)
+    universe_lines = (GOLDEN / "nifty500.txt").read_text().split()
+    (cache / "universe-nifty500.txt").write_text("# saved 2026-09-13\n" + "\n".join(universe_lines) + "\n")
     meta = json.loads((GOLDEN / "meta.json").read_text())
     settings = make_settings(**meta["settings"], cache_dir=cache, runs_dir=tmp_path / "runs")
     universe = set((GOLDEN / "nifty500.txt").read_text().split())
@@ -226,3 +230,40 @@ def test_run_refuses_without_a_warm_cache(make_settings, tmp_path):
     settings = make_settings(cache_dir=tmp_path / "empty")
     with pytest.raises(FileNotFoundError, match="warm"):
         bt._build(settings, date(2026, 1, 1), date(2026, 2, 1), "x", [])
+
+
+def test_run_dates_needs_a_full_index_history_before_the_first_date():
+    days = [date(2025, 1, 1) + __import__("datetime").timedelta(days=i) for i in range(250)]
+    assert bt.first_feasible_date(days, StrategyParams()) == days[200]
+    assert bt.first_feasible_date(days[:200], StrategyParams()) is None
+
+
+def test_build_starts_where_the_cache_can_judge_the_regime_and_warns_on_a_weekend_weekday(replay, caplog):
+    settings, _, _, candles, index_token = replay
+    earliest = bt.first_feasible_date(candles.trading_days(index_token), StrategyParams.from_settings(settings))
+    assert earliest is not None and earliest > date(2025, 10, 1)
+
+    with caplog.at_level(logging.WARNING, logger="stocks_on_the_move.backtest"):
+        run = bt._build(settings, date(2025, 10, 1), date(2026, 9, 23), "x", [])
+    assert run.dates[0] >= earliest and "starting at" in caplog.text
+    assert run.dates[0].weekday() == WEDNESDAY
+
+    caplog.clear()
+    saturday = settings.model_copy(update={"trading_weekday": 5})
+    with (
+        caplog.at_level(logging.WARNING, logger="stocks_on_the_move.backtest"),
+        pytest.raises(ValueError, match="no run dates"),
+    ):
+        bt._build(saturday, date(2026, 8, 5), date(2026, 9, 23), "x", [])
+    assert "weekend day" in caplog.text
+
+
+def test_compare_prefers_the_newest_result_with_a_label(make_settings, tmp_path):
+    settings = make_settings(runs_dir=tmp_path / "runs")
+    older = tmp_path / "runs" / "backtests" / "2023-11-12_2026-02-01-blend"
+    newer = tmp_path / "runs" / "backtests" / "2022-07-13_2026-09-09-blend"
+    for d, stamp in ((older, 1_000), (newer, 2_000)):
+        d.mkdir(parents=True)
+        (d / "summary.json").write_text(json.dumps({"label": "blend", "weeks": stamp}))
+        os.utime(d / "summary.json", (stamp, stamp))
+    assert bt.find_summary(settings, "blend") == newer / "summary.json"
