@@ -15,12 +15,13 @@ A weekly momentum-rotation strategy for NSE equities, after Andreas Clenow's
 2. ranks the NIFTY 500 by a momentum score,
 3. sells holdings that fell out of the top of the ranking, dropped below their
    100-day moving average, or hit a trailing stop,
-4. every second week, resizes what is left toward an ATR-based risk target,
+4. every second week (twelve or more days since the last time), resizes what
+   is left toward an ATR-based risk target,
 5. if bullish and there is cash, buys down the ranking until it runs out of
    cash or slots.
 
-Orders go through Zerodha Kite Connect. State lives in four CSV files in the
-working directory. There is no database, no scheduler and no UI. The code is
+Orders go through Zerodha Kite Connect. State lives in four CSV files and
+one JSON file in the working directory. There is no database, no scheduler and no UI. The code is
 one module per job under `src/stocks_on_the_move/` (ADR-020):
 
 | Module | Job |
@@ -134,7 +135,7 @@ behind each step.
 | 6 | Rank | `get_universe`, `rank_step` (`gather_snapshots`, `evaluate`, `rank`) | One candle read per instrument and holding into `ctx.snapshots`; filters then scores; see section 4 |
 | 7 | Exits | `prune_portfolio` (`decide_exits`, then `trade`) | Runs every week, bull or bear |
 | 8 | Raise cash | `raise_cash_if_needed` | Only when a withdrawal drove cash negative |
-| 9 | Resize | `resize_positions`, `size` | Even ISO weeks only, or `FORCE_RESIZE=1` |
+| 9 | Resize | `resize_positions`, `size` | When `strategy_state.json` records no rebalance or one twelve or more days ago (ADR-027), or `FORCE_RESIZE=1`; writes the date back |
 | 10 | Mark to market | `live_value` | Batched `ltp()` |
 | 11 | Buys | `buy_candidates`, `size`, `safe_buy` | Bull regime and cash > 0 only. Every order waits for the broker's verdict (`await_fill`, ADR-019) and books what filled |
 | 12 | Snapshot | `write_portfolio` | Writes `OUT_FILE`; the human promotes it to `PORTFOLIO_FILE`. A plan logs what it would hold instead |
@@ -260,7 +261,7 @@ priced from a batched `ltp()`. Series in `NO_MARKET_SERIES` (`BE`, `BZ`,
 the best bid or ask from a `quote()` depth call. `series_of` and
 `base_symbol` do the parsing; both are unit tested.
 
-**All scheduling is IST.** Weekday checks and ISO-week parity use
+**All scheduling is IST.** The weekday check and the rebalance cadence use
 `ist_now()`, the candle window ends on the IST date (ADR-018), and candle
 dates are timezone-aware IST.
 
@@ -297,6 +298,7 @@ work.
 | `next_portfolio.csv` | step 12 | you | Copy over `current_portfolio.csv`; it already holds the fills the broker confirmed (ADR-019) |
 | `cash_ledger.csv` | you, or `ENV_CASHFLOW` | step 2 | `date,amount,note` |
 | `trades_ledger.csv` | every confirmed fill | step 2 | Append-only; filled quantity and the broker's average price (ADR-019) |
+| `strategy_state.json` | step 9, when a rebalance was performed | step 9 | `last_resize_date`; versioned like the ledgers, written by the run only, never by hand (ADR-027) |
 | `.cache_candles/<token>.csv` | `CandleStore` | `CandleStore` | `date,open,high,low,close,volume`; git-ignored, safe to delete |
 | `.cache_candles/universe-<name>.txt` | `NseArchives`, on every successful fetch | `NseArchives`, when NSE is unreachable | The last-good constituents list, dated on its first line (ADR-020); git-ignored, safe to delete |
 | `runs/<date>/<time>-<mode>/` | every step, as it completes | you | Eleven files per run (ADR-006; `orders.csv` since ADR-019); git-ignored; `runs/latest` is a symlink to the newest. A `-plan` run writes this and nothing else (ADR-022) |
@@ -403,13 +405,13 @@ fixtures (ADR-023); `tests/test_golden.py` is the golden-file regression test
 everything above the helpers, including whole `run(ctx)` calls in bull, bear
 and kill-switch markets. To test a strategy function, take the `ctx` fixture
 (a `RunContext` over `fakes.FakeBroker` with the clock frozen on a Wednesday
-in an even ISO week), add instruments with `broker.add_equity(...)` and
+and no rebalance on record, so one is due), add instruments with `broker.add_equity(...)` and
 prices with `broker.ltps[...]`, then assert on `broker.orders` and
 `ctx.portfolio`.
 
 **The golden test.** `tests/test_golden.py` (ADR-009) runs the whole pipeline
-against the frozen, synthetic inputs in `tests/fixtures/golden/` twice, on an
-even and an odd ISO week, and compares the ADR-006 tables (`universe`,
+against the frozen, synthetic inputs in `tests/fixtures/golden/` twice, once
+with the last rebalance fourteen days back and once seven, and compares the ADR-006 tables (`universe`,
 `ranking`, `exits`, `sizing`, `candidates`, `trades`, `portfolio_after`) with
 the committed files under `expected/`. It is the answer to "did the ranking,
 the exits or the sizes change" for a strategy edit, a pandas upgrade (ADR-003)
@@ -458,7 +460,7 @@ and 019, which still refer to them by their old numbers; the last to close,
 
 - **ATR** Average True Range, here a simple 20-day mean of the true range. Used for sizing and the trailing stop.
 - **MA** Simple moving average: the mean of the last N closes (ADR-024; EMAs until then).
-- **ISO week parity** `ist_now().isocalendar().week % 2`; even weeks resize.
+- **Resize cadence** twelve or more days since `last_resize_date` in `strategy_state.json` (ADR-027).
 - **LTP** Last traded price, from Kite's batched `ltp()` endpoint.
 - **Series** The NSE suffix on a tradingsymbol (`-BE`, `-BZ`). `EQ` is the normal rolling-settlement series and has no suffix.
 - **tradingsymbol / instrument_token** Kite's human-readable name and numeric id for an instrument. Candles are keyed by token, orders by tradingsymbol.

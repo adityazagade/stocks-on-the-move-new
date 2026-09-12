@@ -144,7 +144,7 @@ def test_a_plan_run_decides_everything_sends_nothing_and_writes_no_state(make_co
     # nothing reached the broker, nothing reached the state files
     assert broker.orders == []
     assert not (tmp_path / "trades_ledger.csv").exists() and not (tmp_path / "cash_ledger.csv").exists()
-    assert not (tmp_path / "next_portfolio.csv").exists()
+    assert not (tmp_path / "next_portfolio.csv").exists() and not (tmp_path / "strategy_state.json").exists()
     # the decisions happened, in memory
     assert "ZZZ" not in ctx.portfolio.positions and {"AAA", "BBB"} <= set(ctx.portfolio.positions)
     orders = read_table(ctx.artifacts.path / "orders.csv")

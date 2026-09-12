@@ -54,6 +54,7 @@ def make_settings(tmp_path) -> Callable[..., Settings]:
             "out_file": str(tmp_path / "next_portfolio.csv"),
             "cash_ledger_file": str(tmp_path / "cash_ledger.csv"),
             "trades_ledger_file": str(tmp_path / "trades_ledger.csv"),
+            "state_file": str(tmp_path / "strategy_state.json"),
             "runs_dir": tmp_path / "runs",
         }
         values.update(overrides)

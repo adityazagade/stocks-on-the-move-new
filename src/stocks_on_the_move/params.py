@@ -39,6 +39,7 @@ class StrategyParams:
     trend_ma_period: int = 100  # a stock must close above this simple moving average to be ranked (ADR-024)
     regime_ma_period: int = 200  # the index must close above this simple moving average for buys
     trading_days_yr: int = 250
+    resize_after_days: int = 12  # a size rebalance is due this many days after the last (ADR-027)
     min_shares: int = 1
 
     # ── the operator's knobs, from Settings (ADR-007) ──

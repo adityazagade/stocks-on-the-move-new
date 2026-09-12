@@ -5,15 +5,25 @@ from __future__ import annotations
 import csv
 import json
 import logging
+from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
-from fakes import EVEN_WEEK_WEDNESDAY, ODD_WEEK_WEDNESDAY, FakeBroker, make_candles, trending_closes
+from fakes import EVEN_WEEK_WEDNESDAY, FakeBroker, make_candles, trending_closes
 from stocks_on_the_move import pipeline as m
 from stocks_on_the_move.broker import Instrument, Order, Quote
 from stocks_on_the_move.context import Fill, build_token_cache, token_of
 from stocks_on_the_move.execution import ltp_map, safe_buy, safe_sell
-from stocks_on_the_move.ledger import TRADE_COLUMNS, init_cash_balance, read_portfolio, write_portfolio
+from stocks_on_the_move.ledger import (
+    TRADE_COLUMNS,
+    init_cash_balance,
+    last_resize_date,
+    load_state,
+    read_portfolio,
+    save_state,
+    write_portfolio,
+)
 from stocks_on_the_move.pipeline import (
     gather_snapshots,
     prune_portfolio,
@@ -175,17 +185,54 @@ def test_prune_sells_unranked_holdings_and_skips_on_an_empty_ranking(make_contex
 # ── resize and cash management ───────────────────────────────────────────
 
 
-def test_resize_skips_odd_iso_weeks_unless_forced(make_context):
+def test_resize_skips_when_the_last_one_was_under_twelve_days_ago_unless_forced(make_context):
     for forced in (False, True):
         broker = FakeBroker()
-        broker.add_equity("AAA", 1, trending_closes(120), end=ODD_WEEK_WEDNESDAY.date())
-        ctx = make_context(broker, now=lambda: ODD_WEEK_WEDNESDAY, force_resize=forced)
+        broker.add_equity("AAA", 1, trending_closes(120), end=TODAY)
+        ctx = make_context(broker, force_resize=forced)
+        save_state(ctx.settings.state_file, {"last_resize_date": (TODAY - timedelta(days=7)).isoformat()})
         init_cash_balance(ctx)
         build_token_cache(ctx)
         ctx.portfolio.positions = {"AAA": 1000}
         resize_positions(ctx, bull=True)
         touched = any(c[0] in ("ltp", "historical_data", "place_order") for c in broker.calls)
         assert touched is forced
+        # forcing rewrites the date; skipping leaves it
+        expected = TODAY if forced else TODAY - timedelta(days=7)
+        assert last_resize_date(load_state(ctx.settings.state_file)) == expected
+
+
+def test_resize_is_due_with_no_record_or_twelve_days_after_the_last_and_writes_the_date(make_context):
+    for last, due in ((None, True), (TODAY - timedelta(days=12), True), (TODAY - timedelta(days=11), False)):
+        broker = FakeBroker()
+        broker.add_equity("AAA", 1, trending_closes(120), end=TODAY)
+        ctx = make_context(broker, artifacts=True)
+        if last is not None:
+            save_state(ctx.settings.state_file, {"last_resize_date": last.isoformat(), "note": "kept"})
+        init_cash_balance(ctx)
+        build_token_cache(ctx)
+        ctx.portfolio.positions = {"AAA": 1000}
+        resize_positions(ctx, bull=True)
+        meta = json.loads((ctx.artifacts.path / "run.json").read_text())
+        assert meta["resize_performed"] is due
+        assert meta["last_resize_date_before"] == (last.isoformat() if last else None)
+        state = load_state(ctx.settings.state_file)
+        if due:
+            assert last_resize_date(state) == TODAY and meta["last_resize_date_after"] == TODAY.isoformat()
+        else:
+            assert last is not None  # only a dated record can be too recent
+            assert last_resize_date(state) == last and meta["last_resize_date_after"] == last.isoformat()
+        if last is not None:
+            assert state["note"] == "kept"  # other keys survive a rewrite
+
+
+def test_an_unreadable_state_file_is_a_warning_and_counts_as_no_record(make_context, caplog):
+    ctx = make_context(artifacts=True)
+    Path(ctx.settings.state_file).write_text("{not json")
+    with caplog.at_level(logging.WARNING, logger=LOG):
+        resize_positions(ctx, bull=True)
+    assert "Ignoring the state file" in caplog.text
+    assert json.loads((ctx.artifacts.path / "run.json").read_text())["resize_performed"] is True
 
 
 def test_resize_sells_down_and_buys_up_toward_atr_targets(make_context):
@@ -382,7 +429,8 @@ def test_prune_writes_a_verdict_per_holding(make_context):
 
 
 def test_skipped_resize_leaves_a_header_and_a_flag(make_context):
-    ctx = make_context(now=lambda: ODD_WEEK_WEDNESDAY, artifacts=True)
+    ctx = make_context(artifacts=True)
+    save_state(ctx.settings.state_file, {"last_resize_date": (TODAY - timedelta(days=7)).isoformat()})
     ctx.portfolio.positions = {"AAA": 10}
     resize_positions(ctx, bull=True)
     assert (ctx.artifacts.path / "sizing.csv").read_text() == ",".join(SIZING_COLUMNS) + "\n"

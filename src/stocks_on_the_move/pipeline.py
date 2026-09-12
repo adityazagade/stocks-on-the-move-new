@@ -38,7 +38,15 @@ from stocks_on_the_move.execution import (
     trade,
 )
 from stocks_on_the_move.indicators import Snapshot, SnapshotError
-from stocks_on_the_move.ledger import TRADE_COLUMNS, init_cash_balance, read_portfolio, write_portfolio
+from stocks_on_the_move.ledger import (
+    TRADE_COLUMNS,
+    init_cash_balance,
+    last_resize_date,
+    load_state,
+    read_portfolio,
+    save_state,
+    write_portfolio,
+)
 from stocks_on_the_move.params import StrategyParams
 from stocks_on_the_move.reporting import (
     CANDIDATE_COLUMNS,
@@ -196,14 +204,31 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
 
 # ── 9 ▸ size rebalance ───────────────────────────────────────────────────
 def resize_positions(ctx: RunContext, bull: bool) -> None:
-    """Every even ISO week (IST), rebalance sizes toward ATR targets (cash-aware); verdicts go to sizing.csv."""
+    """Rebalance sizes toward ATR targets when the last rebalance is old enough (ADR-027); verdicts go to sizing.csv.
+
+    Due when ``strategy_state.json`` records no rebalance, or one at least
+    ``resize_after_days`` before the run date, or when ``FORCE_RESIZE`` is set.
+    The date is written back when a rebalance was performed, trades or not;
+    a plan reads it and leaves it alone.
+    """
     pf = ctx.portfolio
-    if (ctx.now().isocalendar().week % 2) and not ctx.settings.force_resize:  # odd ISO week → skip
-        logger.info("Size rebalance skipped (odd week, IST)")
+    s = ctx.settings
+    params = strategy_params(ctx)
+    today = ctx.now().date()
+    state = load_state(s.state_file)
+    last = last_resize_date(state)
+    since = (today - last).days if last is not None else None
+    ctx.artifacts.record(last_resize_date_before=last.isoformat() if last else None)
+    if since is not None and since < params.resize_after_days and not s.force_resize:
+        logger.info(
+            "Size rebalance skipped (last on %s, %d days ago; due after %d)", last, since, params.resize_after_days
+        )
         ctx.artifacts.write_table("sizing", SIZING_COLUMNS, [])
-        ctx.artifacts.record(resize_performed=False)
+        ctx.artifacts.record(resize_performed=False, last_resize_date_after=last.isoformat() if last else None)
         return
-    ctx.artifacts.record(resize_performed=True)
+    ctx.artifacts.record(resize_performed=True, last_resize_date_after=today.isoformat())
+    if not s.plan_only:
+        save_state(s.state_file, {**state, "last_resize_date": today.isoformat()})
     gather_snapshots(ctx, ())
 
     account_equity = pf.cash + live_value(ctx)
@@ -466,7 +491,7 @@ def run(ctx: RunContext) -> None:
     # 8) If withdrawals exceed available cash, raise cash by selling worst holdings
     raise_cash_if_needed(ctx, ranks)
 
-    # 9) Size parity rebalance (every even ISO week in IST), cash-aware
+    # 9) Size rebalance when the last one is twelve or more days old (ADR-027), cash-aware
     resize_positions(ctx, bull)
 
     # 10) Cash left after re-sizing

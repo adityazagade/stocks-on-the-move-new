@@ -46,7 +46,7 @@ from stocks_on_the_move.broker import Broker, Candle, Instrument, Order, OrderSt
 from stocks_on_the_move.candles import window
 from stocks_on_the_move.context import RunContext
 from stocks_on_the_move.execution import live_value
-from stocks_on_the_move.ledger import TRADE_COLUMNS, write_portfolio
+from stocks_on_the_move.ledger import TRADE_COLUMNS, save_state, write_portfolio
 from stocks_on_the_move.logging_setup import configure_logging
 from stocks_on_the_move.momentum import authenticate
 from stocks_on_the_move.params import StrategyParams
@@ -345,6 +345,7 @@ def _sim_settings(settings: Settings, state_dir: Path) -> Settings:
         out_file=str(state_dir / "next_portfolio.csv"),
         cash_ledger_file=str(state_dir / "cash_ledger.csv"),
         trades_ledger_file=str(state_dir / "trades_ledger.csv"),
+        state_file=str(state_dir / "strategy_state.json"),
         runs_dir=state_dir / "runs",
     )
     return Settings.from_values(**values)
@@ -382,7 +383,7 @@ def simulate(bt: Backtest, out_dir: Path) -> dict[str, Any]:
     """Replay every run date, write the five output files, return the summary."""
     state = out_dir / "state"
     state.mkdir(parents=True, exist_ok=True)
-    for name in ("portfolio.csv", "next_portfolio.csv", "cash_ledger.csv", "trades_ledger.csv"):
+    for name in ("portfolio.csv", "next_portfolio.csv", "cash_ledger.csv", "trades_ledger.csv", "strategy_state.json"):
         (state / name).unlink(missing_ok=True)
     sim = _sim_settings(bt.settings, state)
     broker = ReplayBroker(bt.instruments, bt.candles)
@@ -410,6 +411,8 @@ def simulate(bt: Backtest, out_dir: Path) -> dict[str, Any]:
             pf = ctx.portfolio
             _append_rows(state / "trades_ledger.csv", TRADE_COLUMNS, pf.trades)  # next date's cash comes from here
             write_portfolio(str(state / "portfolio.csv"), pf.positions)
+            if recorder.fields.get("resize_performed"):  # a plan does not write the date; the harness carries it
+                save_state(str(state / "strategy_state.json"), {"last_resize_date": d.isoformat()})
             market_value = live_value(ctx)
         filled = [(intent, fill) for intent, fill in pf.intents if fill is not None and fill.filled > 0]
         for (intent, _), row in zip(filled, pf.trades, strict=True):
