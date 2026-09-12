@@ -210,10 +210,30 @@ step 6's five-year baseline run needs a Kite login and is the owner's.
   duplicates, the comparison table, and the refusal without a warm cache.
   260 tests pass; `ty` clean; golden untouched.
 - **Step 6, the owner's**: `warm` once, then a baseline over the full range;
-  the Notes' first comparison follows.
+  the Notes' first comparison follows. The owner warmed the cache on
+  2026-09-13: 500 universe equities, 414 with the full five years.
+
 
 ## Notes
 
-The first comparison worth running once the harness exists: the current
-blend against the book's lookbacks 21/63/126 with the same weights, and
-against the book's regression score (ADR-028), over the same five years.
+Learned from the owner's first real run on 2026-09-13, and folded into the
+harness the same day:
+
+- A `TRADING_WEEKDAY` left at Saturday from a paper-run test made the replay
+  run only on NSE's special weekend sessions, six dates in twenty-seven
+  months, with numbers that looked plausible. The command now warns on a
+  weekend weekday and again when the run dates are fewer than half the weeks
+  in the range.
+- A five-year cache cannot judge the regime on its first months: the index
+  needs 200 candles before a run date. The command now starts at the first
+  date it can and says so, instead of failing on the first date.
+- `compare` sorted results by directory name, so an older run with a later
+  range name shadowed a newer one. It sorts by modification time.
+- A name whose candles end inside the range, a delisting or a rename the
+  cache does not follow, stays held with no price: every exit is skipped
+  with a WARNING and the position counts for nothing in equity, a total
+  loss. That is conservative and the same for every variant; a run's log
+  shows it as the same name warning week after week.
+- The first comparison worth running once the harness exists: the current
+  blend against the book's lookbacks 21/63/126 with the same weights, and
+  against the book's regression score (ADR-028), over the same five years.

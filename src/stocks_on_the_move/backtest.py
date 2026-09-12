@@ -242,6 +242,16 @@ class ReplayBroker:
 
 
 # ── run dates ────────────────────────────────────────────────────────────
+def first_feasible_date(index_days: Sequence[date], params: StrategyParams) -> date | None:
+    """The earliest run date the regime can be judged on: the day of the index's ``regime_ma_period + 1``-th candle.
+
+    A run date sees candles strictly before it, so it needs that many behind it.
+    ``None`` when the cache holds too few.
+    """
+    need = params.regime_ma_period
+    return index_days[need] if len(index_days) > need else None
+
+
 def run_dates(trading_days: Sequence[date], start: date, end: date, weekday: int) -> list[date]:
     """Every ``weekday`` from ``start`` to ``end``, each moved to the next trading day in its week when it has none.
 
@@ -533,7 +543,8 @@ def backtests_dir(settings: Settings) -> Path:
 
 
 def find_summary(settings: Settings, label: str) -> Path:
-    matches = sorted(backtests_dir(settings).glob(f"*-{label}/summary.json"))
+    """The most recently written summary with this label; an older run with a later range name does not shadow it."""
+    matches = sorted(backtests_dir(settings).glob(f"*-{label}/summary.json"), key=lambda p: p.stat().st_mtime)
     if not matches:
         raise FileNotFoundError(f"no backtest labelled {label!r} under {backtests_dir(settings)}")
     return matches[-1]
@@ -565,10 +576,34 @@ def _build(settings: Settings, start: date, end: date, label: str, overrides: Se
     index = [i for i in wanted if i.tradingsymbol == settings.index_symbol]
     if not index or index[0].token not in candles.tokens:
         raise FileNotFoundError(f"no candles for the regime index {settings.index_symbol!r}: run `warm` first")
-    dates = run_dates(candles.trading_days(index[0].token), start, end, settings.trading_weekday)
+    params = parse_overrides(overrides, StrategyParams.from_settings(settings))
+    index_days = candles.trading_days(index[0].token)
+    earliest = first_feasible_date(index_days, params)
+    if earliest is None:
+        raise ValueError(f"the cache holds {len(index_days)} index candles; the regime needs {params.regime_ma_period}")
+    if start < earliest:
+        logger.warning(
+            "The cache starts %s and the index needs %d candles before a run date; starting at %s, not %s",
+            index_days[0],
+            params.regime_ma_period,
+            earliest,
+            start,
+        )
+        start = earliest
+    if settings.trading_weekday >= 5:
+        logger.warning(
+            "TRADING_WEEKDAY=%d is a weekend day; NSE trades on weekends only in special sessions, so there will be "
+            "almost no run dates. Set TRADING_WEEKDAY=2 for Wednesdays",
+            settings.trading_weekday,
+        )
+    dates = run_dates(index_days, start, end, settings.trading_weekday)
     if not dates:
         raise ValueError(f"no run dates between {start} and {end} with index candles; is the cache warm that far back?")
-    params = parse_overrides(overrides, StrategyParams.from_settings(settings))
+    weeks_in_range = (end - start).days // 7 + 1
+    if len(dates) < weeks_in_range // 2:
+        logger.warning(
+            "Only %d run dates over %d weeks; check TRADING_WEEKDAY and the cache", len(dates), weeks_in_range
+        )
     return Backtest(settings, params, frozenset(saved), instruments, candles, dates, label)
 
 
