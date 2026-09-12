@@ -14,7 +14,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-007](ADR-007-typed-settings-object.md) | Replace module-level os.getenv calls with a typed settings object | Accepted | 2026-09-12 |
 | [ADR-008](ADR-008-broker-protocol-and-dependency-injection.md) | A Broker protocol, a Kite adapter, and injected dependencies | Accepted | 2026-09-12 |
 | [ADR-009](ADR-009-golden-file-regression-test.md) | A golden-file regression test on a frozen candle cache | Accepted | 2026-09-12 |
-| [ADR-010](ADR-010-type-checking-with-ty.md) | Static type checking with ty | Accepted | 2026-09-12 |
+| [ADR-010](ADR-010-type-checking-with-ty.md) | Static type checking with ty | Implemented | 2026-09-12 |
 | [ADR-011](ADR-011-continuous-integration-on-github-actions.md) | Continuous integration on GitHub Actions | Implemented | 2026-09-12 |
 
 ## Writing a new ADR
