@@ -229,6 +229,11 @@ harness the same day:
   date it can and says so, instead of failing on the first date.
 - `compare` sorted results by directory name, so an older run with a later
   range name shadowed a newer one. It sorts by modification time.
+- A name whose candles end inside the range, a delisting or a rename the
+  cache does not follow, stays held with no price: every exit is skipped
+  with a WARNING and the position counts for nothing in equity, a total
+  loss. That is conservative and the same for every variant; a run's log
+  shows it as the same name warning week after week.
 - The first comparison worth running once the harness exists: the current
   blend against the book's lookbacks 21/63/126 with the same weights, and
   against the book's regression score (ADR-028), over the same five years.
