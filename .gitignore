@@ -24,16 +24,19 @@ kite_session.json
 # Candle cache written by the strategy (thousands of CSVs, fully regenerable)
 .cache_candles/
 
-# Per-run artifacts (ADR-006). The rule: state the code reads in order to run is
-# versioned (the ledgers below); diagnostics the code produces are not.
+# The account lives in runs/ and is never committed (ADR-029, superseding ADR-004):
+# the five state files at its root (current_portfolio.csv, next_portfolio.csv,
+# cash_ledger.csv, trades_ledger.csv, strategy_state.json) and the per-run
+# diagnostics under <date>/<time>-<mode>/ (ADR-006). Back this directory up.
 runs/
 
-# The ledgers below hold live portfolio and trade history. They are tracked on
-# purpose so the repo doubles as a record of the account. Uncomment to exclude.
-# current_portfolio.csv
-# next_portfolio.csv
-# cash_ledger.csv
-# trades_ledger.csv
+# The same five names at the checkout root, in case a *_FILE setting is pointed
+# back there. Anchored: tests/fixtures/golden/ carries two of these names on purpose.
+/current_portfolio.csv
+/next_portfolio.csv
+/cash_ledger.csv
+/trades_ledger.csv
+/strategy_state.json
 
 # Editors / OS
 .idea/

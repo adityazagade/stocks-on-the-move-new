@@ -20,17 +20,18 @@ it disagrees with an Accepted ADR, the ADR wins and this file is fixed.
 3. **pandas stays below 3.0** until an ADR moves the bound on the strength of
    the golden test (ADR-003, ADR-009). Do not merge a bot PR that widens it.
 4. **Never commit `.env`, a Kite access token, or anything under `runs/`.**
-   The rule: state the code reads to run (the four ledgers and
-   `strategy_state.json`, ADR-027) is versioned;
-   diagnostics it produces are not (ADR-004, ADR-005, ADR-006).
+   `runs/` is the account: the four ledgers and `strategy_state.json` at its
+   root, the run diagnostics beneath. None of it is versioned; the repository
+   is code only, and the owner backs `runs/` up outside git (ADR-029,
+   ADR-005, ADR-006).
 5. **Paper mode writes real files.** `ALLOW_KITE_EXECUTION=0` still appends
-   to the trades ledger and rewrites `next_portfolio.csv`. Point
-   `PORTFOLIO_FILE`, `OUT_FILE`, `CASH_LEDGER_FILE` and `TRADES_LEDGER_FILE`
-   at scratch paths before any test run; `ONBOARDING.md` section 2 has the
+   to the trades ledger and rewrites `next_portfolio.csv`. Point `RUNS_DIR`
+   at a scratch directory before any test run (it moves the five state files
+   and the run directory together); `ONBOARDING.md` section 2 has the
    recipe. `PLAN_ONLY=1` is the mode that writes nothing: it decides, sends
    nothing, and leaves only a run directory (ADR-022).
 6. **`archive/` is frozen.** Never edit, lint, format or import it.
-7. **Never hand-edit `trades_ledger.csv`.** Cash is reconstructed from it on
+7. **Never hand-edit `runs/trades_ledger.csv`.** Cash is reconstructed from it on
    every run; edit it and every later number is wrong.
 8. **Commit and push only when the owner asks.** One ADR per commit; name the
    ADR in the subject or body of every implementation commit; the final

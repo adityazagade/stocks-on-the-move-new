@@ -1,8 +1,8 @@
 # ADR-004: Track the account ledgers in git
 
-- **Status**: Implemented
+- **Status**: Superseded by [ADR-029](ADR-029-keep-the-account-state-in-runs-outside-git.md)
 - **Date**: 2026-09-12
-- **Last Updated**: 2026-09-12
+- **Last Updated**: 2026-09-13
 - **Author**: Aditya Zagade
 
 ## Context

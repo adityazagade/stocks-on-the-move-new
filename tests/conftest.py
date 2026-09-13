@@ -41,7 +41,8 @@ def update_golden(request: pytest.FixtureRequest) -> bool:
 def make_settings(tmp_path) -> Callable[..., Settings]:
     """``make_settings(**overrides)`` -> a Settings that ignores the environment; paper mode, tmp paths."""
 
-    def make(**overrides) -> Settings:
+    def make(*, state_files: bool = True, **overrides) -> Settings:
+        """``state_files=False`` leaves the five state paths at their production defaults under ``runs_dir``."""
         values = {
             "kite_api_key": "test-key",
             "kite_api_secret": "test-secret",
@@ -50,13 +51,16 @@ def make_settings(tmp_path) -> Callable[..., Settings]:
             "kite_session_file": tmp_path / "kite_session.json",
             "kite_redirect_port": 0,
             "kite_open_browser": False,
-            "portfolio_file": str(tmp_path / "current_portfolio.csv"),
-            "out_file": str(tmp_path / "next_portfolio.csv"),
-            "cash_ledger_file": str(tmp_path / "cash_ledger.csv"),
-            "trades_ledger_file": str(tmp_path / "trades_ledger.csv"),
-            "state_file": str(tmp_path / "strategy_state.json"),
             "runs_dir": tmp_path / "runs",
         }
+        if state_files:  # explicit paths at the tmp root, so tests can assert what a run did and did not write
+            values.update(
+                portfolio_file=str(tmp_path / "current_portfolio.csv"),
+                out_file=str(tmp_path / "next_portfolio.csv"),
+                cash_ledger_file=str(tmp_path / "cash_ledger.csv"),
+                trades_ledger_file=str(tmp_path / "trades_ledger.csv"),
+                state_file=str(tmp_path / "strategy_state.json"),
+            )
         values.update(overrides)
         return Settings.from_values(**values)
 
@@ -83,9 +87,10 @@ def make_context(make_settings) -> Callable[..., RunContext]:
         *,
         now: Callable[[], datetime] | None = None,
         artifacts: bool = False,
+        state_files: bool = True,
         **overrides,
     ):
-        s = make_settings(**overrides)
+        s = make_settings(state_files=state_files, **overrides)
         broker = FakeBroker() if broker is None else broker
         clock = now or (lambda: EVEN_WEEK_WEDNESDAY)
         candles = CandleStore(

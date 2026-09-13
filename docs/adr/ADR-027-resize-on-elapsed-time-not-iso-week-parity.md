@@ -158,3 +158,11 @@ Implemented on 2026-09-13, one pull request, golden expected files untouched.
 - `CLAUDE.md` rule 4, the onboarding guide's first section, the pipeline
   table, the scheduling paragraph, the file lifecycle and the glossary name
   the fifth file and the cadence.
+
+## Notes
+
+ADR-029 (2026-09-13) moved `strategy_state.json`, with the four ledgers, to the
+root of `runs/`, outside version control; "versioned like the ledgers" now
+means "kept and backed up with them". The seeded file moved with the rest on
+the owner's machine; a fresh checkout has no seed and rebalances on its
+first run, as the Neutral consequence above says.
