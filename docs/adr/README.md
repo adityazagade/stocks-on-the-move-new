@@ -34,6 +34,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-027](ADR-027-resize-on-elapsed-time-not-iso-week-parity.md) | Resize on elapsed time since the last resize, not ISO-week parity | Implemented | 2026-09-12 |
 | [ADR-028](ADR-028-rank-by-the-regression-slope.md) | Rank by the book's regression slope, on backtest evidence | Rejected | 2026-09-12 |
 | [ADR-029](ADR-029-keep-the-account-state-in-runs-outside-git.md) | Keep the account state at the root of `runs/`, outside git | Implemented | 2026-09-13 |
+| [ADR-030](ADR-030-two-strategies-clenow-and-adm-for-stocks.md) | Two strategies, Clenow's and an ADM adapted to stocks, and no hybrid | Proposed | 2026-09-13 |
 
 ## Writing a new ADR
 
