@@ -1,6 +1,6 @@
 # ADR-029: Keep the account state at the root of `runs/`, outside git
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Date**: 2026-09-13
 - **Last Updated**: 2026-09-13
 - **Author**: Aditya Zagade
@@ -174,4 +174,24 @@ creates the directory those files are written to.
 
 ## Implementation Status
 
-Proposed; nothing implemented.
+Implemented on 2026-09-13, two commits, golden expected files untouched.
+
+- `settings.py`: `runs_dir` is declared first in the Files section; the
+  five state-file fields keep their names and `str` type and take their
+  default from a `default_factory` over the validated `runs_dir`, the idiom
+  `starting_cash` already used; the example file shows `runs/<name>` for
+  each. `RUNS_DIR=/tmp/sotm` moves all five; any one `*_FILE` still wins.
+- `ledger.py`: `_ensure_parent` creates the directory in `write_portfolio`,
+  `_ensure_csv` and `save_state`. Readers are unchanged; a missing file was
+  already an empty account.
+- The five root files left the index and moved into `runs/`; `.gitignore`
+  explains `runs/` and anchors the five names at the root.
+- Docs: `CLAUDE.md` rules 4, 5 and 7; `ONBOARDING.md` sections 1, 2, 4, 5
+  and the glossary; `README.md`. ADR-004 Superseded; ADR-006 and ADR-027
+  Notes.
+- Tests: defaults under `runs/` and following `runs_dir`, including `~`;
+  an explicit path wins while the others follow; `RUNS_DIR` in the
+  environment moves them and a `*_FILE` variable beats it; the first
+  paper run on an absent `RUNS_DIR` creates the ledgers with headers, the
+  state file and the snapshot and starts from `STARTING_CASH`; a plan run
+  there leaves only its run directory. The fixtures keep explicit paths.

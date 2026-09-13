@@ -294,3 +294,8 @@ The versioning rule adopted here, state the code reads is versioned and
 output the code produces is not, is consistent with ADR-004 as written. If
 the owner later decides the ledgers should also leave version control, that
 is a new ADR superseding ADR-004, not an edit to it.
+
+- ADR-029 (2026-09-13) retired the first half of the rule adopted here: the
+  five state files the strategy reads now live at the root of `runs/` and
+  are not versioned either. "The strategy never reads any of it" applies to
+  the per-run directories; the root of `runs/` is state.

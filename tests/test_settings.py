@@ -40,6 +40,8 @@ def test_example_shows_required_credentials_blank_and_defaults_commented():
     assert "\n# TRADING_WEEKDAY=2\n" in text
     assert "\n# ALLOW_KITE_EXECUTION=1\n" in text
     assert "\n# STARTING_CASH=<same as ACCOUNT_VALUE>\n" in text
+    assert "\n# RUNS_DIR=runs\n" in text and "\n# PORTFOLIO_FILE=runs/current_portfolio.csv\n" in text
+    assert text.index("# RUNS_DIR=") < text.index("# PORTFOLIO_FILE=")  # the directory before the files it holds
     assert "# Range: at least 0, at most 6." in text
     assert "test-secret" not in text
 
@@ -56,11 +58,41 @@ def test_defaults_match_the_former_module_constants():
     assert (s.trading_weekday, s.env_cashflow, s.cashflow_note) == (2, 0.0, "env-cashflow")
     assert (s.fees_pct, s.slippage_pct) == (0.0015, 0.0005)
     assert (s.kite_rps, s.kite_max_retries, s.candle_sleep_sec) == (2.0, 6, 0.15)
-    assert (s.portfolio_file, s.out_file) == ("current_portfolio.csv", "next_portfolio.csv")
-    assert (s.cash_ledger_file, s.trades_ledger_file) == ("cash_ledger.csv", "trades_ledger.csv")
+    assert (s.portfolio_file, s.out_file) == ("runs/current_portfolio.csv", "runs/next_portfolio.csv")
+    assert (s.cash_ledger_file, s.trades_ledger_file) == ("runs/cash_ledger.csv", "runs/trades_ledger.csv")
+    assert (s.state_file, s.runs_dir) == ("runs/strategy_state.json", Path("runs"))
     assert s.cache_dir == Path(".cache_candles")
     assert (s.kite_redirect_port, s.kite_open_browser, s.kite_forget_session) == (8765, True, False)
     assert s.kite_session_file == Path.home() / ".config" / "stocks-on-the-move" / "kite_session.json"
+
+
+def test_state_files_default_under_runs_dir_and_follow_it():
+    s = build(runs_dir="~/data/sotm")
+    home = Path.home() / "data" / "sotm"
+    assert s.runs_dir == home
+    assert s.portfolio_file == str(home / "current_portfolio.csv")
+    assert s.trades_ledger_file == str(home / "trades_ledger.csv")
+    assert s.state_file == str(home / "strategy_state.json")
+
+
+def test_an_explicit_state_file_path_wins_while_the_others_follow_runs_dir():
+    s = build(runs_dir="x", portfolio_file="p.csv")
+    assert s.portfolio_file == "p.csv"
+    assert (s.out_file, s.cash_ledger_file) == ("x/next_portfolio.csv", "x/cash_ledger.csv")
+    assert (s.trades_ledger_file, s.state_file) == ("x/trades_ledger.csv", "x/strategy_state.json")
+
+
+def test_runs_dir_in_the_environment_moves_the_state_files_and_a_file_variable_beats_it(monkeypatch):
+    for name in ("PORTFOLIO_FILE", "OUT_FILE", "CASH_LEDGER_FILE", "TRADES_LEDGER_FILE", "STATE_FILE", "RUNS_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("KITE_API_KEY", "k")
+    monkeypatch.setenv("KITE_API_SECRET", "s")
+    monkeypatch.setenv("RUNS_DIR", "/data/sotm")
+    s = Settings.from_env()
+    assert s.trades_ledger_file == "/data/sotm/trades_ledger.csv" and s.state_file == "/data/sotm/strategy_state.json"
+    monkeypatch.setenv("TRADES_LEDGER_FILE", "/elsewhere/trades.csv")
+    s = Settings.from_env()
+    assert s.trades_ledger_file == "/elsewhere/trades.csv" and s.cash_ledger_file == "/data/sotm/cash_ledger.csv"
 
 
 def test_starting_cash_defaults_to_account_value_but_explicit_zero_stays_zero():

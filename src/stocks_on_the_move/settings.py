@@ -31,6 +31,18 @@ class SettingsError(ValueError):
     """The environment holds a value the model rejects. The message names every offending variable."""
 
 
+_DEFAULT_RUNS_DIR = Path("runs")
+
+
+def _state_file(name: str, description: str) -> Any:
+    """A state file at the root of RUNS_DIR unless set explicitly (ADR-029); the example shows the default path."""
+    return Field(
+        default_factory=lambda data: str(data["runs_dir"] / name),
+        description=f"{description} Lives at the root of RUNS_DIR unless set.",
+        json_schema_extra={"example_default": str(_DEFAULT_RUNS_DIR / name)},
+    )
+
+
 class Settings(BaseSettings):
     """All configuration, validated once. Field names are the environment variable names in lower case."""
 
@@ -160,19 +172,22 @@ class Settings(BaseSettings):
     )
 
     # ── Files ────────────────────────────────────────────────────────────
-    portfolio_file: str = Field("current_portfolio.csv", description="Positions going into the run: SYMBOL,QUANTITY.")
-    out_file: str = Field("next_portfolio.csv", description="Positions after the run.")
-    cash_ledger_file: str = Field("cash_ledger.csv", description="Deposits and withdrawals: date, amount, note.")
-    trades_ledger_file: str = Field("trades_ledger.csv", description="Every placed or paper trade and its cash effect.")
-    state_file: str = Field(
-        "strategy_state.json",
-        description="The run's own state (ADR-027): the date of the last size rebalance. Versioned like the ledgers.",
+    # runs_dir comes first: the five state files derive their default from its validated value (ADR-029).
+    runs_dir: Path = Field(
+        _DEFAULT_RUNS_DIR,
+        description=(
+            "The account's directory, git-ignored (ADR-029): the five state files at its root and one "
+            "<date>/<time>-<mode>/ directory per run with the ranking, exits, sizes, trades and log (ADR-006)."
+        ),
+    )
+    portfolio_file: str = _state_file("current_portfolio.csv", "Positions going into the run: SYMBOL,QUANTITY.")
+    out_file: str = _state_file("next_portfolio.csv", "Positions after the run.")
+    cash_ledger_file: str = _state_file("cash_ledger.csv", "Deposits and withdrawals: date, amount, note.")
+    trades_ledger_file: str = _state_file("trades_ledger.csv", "Every placed or paper trade and its cash effect.")
+    state_file: str = _state_file(
+        "strategy_state.json", "The run's own state (ADR-027): the date of the last size rebalance."
     )
     cache_dir: Path = Field(Path(".cache_candles"), description="Per-instrument daily-candle cache; regenerable.")
-    runs_dir: Path = Field(
-        Path("runs"),
-        description="Per-run artifacts (ADR-006): a directory per run with the ranking, exits, sizes, trades and log.",
-    )
 
     @field_validator("*", mode="before")
     @classmethod
@@ -227,7 +242,7 @@ def describe_errors(exc: ValidationError) -> str:
     lines = ["Configuration error in the environment:"]
     for err in exc.errors():
         if err["type"] == "default_factory_not_called":
-            continue  # STARTING_CASH could not be derived because ACCOUNT_VALUE failed; that error is listed
+            continue  # a derived default (STARTING_CASH, a state file) failed with its source; that error is listed
         loc = err["loc"]
         name = str(loc[0]).upper() if loc else "<settings>"
         lines.append(f"  {name}: {err['msg']}")
@@ -272,7 +287,7 @@ EXAMPLE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Logging", ("log_level",)),
     (
         "Files",
-        ("portfolio_file", "out_file", "cash_ledger_file", "trades_ledger_file", "state_file", "cache_dir", "runs_dir"),
+        ("runs_dir", "portfolio_file", "out_file", "cash_ledger_file", "trades_ledger_file", "state_file", "cache_dir"),
     ),
 )
 

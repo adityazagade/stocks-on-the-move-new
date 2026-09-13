@@ -20,8 +20,9 @@ A weekly momentum-rotation strategy for NSE equities, after Andreas Clenow's
 5. if bullish and there is cash, buys down the ranking until it runs out of
    cash or slots.
 
-Orders go through Zerodha Kite Connect. State lives in four CSV files and
-one JSON file in the working directory. There is no database, no scheduler and no UI. The code is
+Orders go through Zerodha Kite Connect. State lives in five files at the
+root of `runs/` (`RUNS_DIR`): four CSVs and one JSON, outside version
+control (ADR-029). There is no database, no scheduler and no UI. The code is
 one module per job under `src/stocks_on_the_move/` (ADR-020):
 
 | Module | Job |
@@ -83,22 +84,23 @@ enter:
   switch is on. Override it to today.
 - **Paper mode still writes the ledgers.** `ALLOW_KITE_EXECUTION=0` skips
   `place_order` but still appends to the trades ledger and rewrites
-  `next_portfolio.csv`. Point those at scratch files or you will corrupt the
-  cash reconstruction for the real account (see section 4).
+  `next_portfolio.csv`. Point `RUNS_DIR` at a scratch directory or you will
+  corrupt the cash reconstruction for the real account (see section 4).
 
 Create `.env.paper` with overrides and layer it over `.env`:
 
 ```sh
 cat > .env.paper <<'ENV'
 ALLOW_KITE_EXECUTION=0
-OUT_FILE=/tmp/sotm/next_portfolio.csv
-CASH_LEDGER_FILE=/tmp/sotm/cash_ledger.csv
-TRADES_LEDGER_FILE=/tmp/sotm/trades_ledger.csv
+RUNS_DIR=/tmp/sotm
 ENV
-mkdir -p /tmp/sotm
 TRADING_WEEKDAY=$(( $(TZ=Asia/Kolkata date +%u) - 1 )) \
   uv run --env-file .env --env-file .env.paper stocks-on-the-move
 ```
+
+The run creates the directory, its two ledgers with headers and its state
+file, starts from `STARTING_CASH` with no positions, and leaves its
+artifacts there too (ADR-029).
 
 Leave `CACHE_DIR` alone: the candle cache is plain market data, sharing it
 saves a few thousand API calls, and the code repairs it if it is stale.
@@ -225,8 +227,8 @@ the cache directory.
 `ctx.portfolio.cash = STARTING_CASH + sum(cash_ledger.amount) + sum(trades_ledger.cash_delta)`.
 The two ledgers are the source of truth for cash, which means:
 
-- never hand-edit `trades_ledger.csv`,
-- to deposit or withdraw, append a row to `cash_ledger.csv` or set
+- never hand-edit `runs/trades_ledger.csv`,
+- to deposit or withdraw, append a row to `runs/cash_ledger.csv` or set
   `ENV_CASHFLOW` for exactly one run. It appends a dated row every time the
   process starts with it set, so never leave it in `.env`,
 - if you change `STARTING_CASH` you change the meaning of every historical row.
@@ -270,10 +272,11 @@ guard writes `runs/<date>/<time>-<mode>/` (ADR-006): the universe verdicts,
 the ranking, the exit reasons, the target sizes, the buy candidates, the
 portfolio before and after, this run's trades, the log, and `run.json` with
 the settings (credentials removed), the regime and the closing numbers.
-`runs/latest` points at the newest. The strategy never reads any of it, the
-tree is git-ignored, and a failed write is a WARNING, never an abort. The
-rule behind it: state the code reads in order to run (the ledgers) is
-versioned; output the code produces is not.
+`runs/latest` points at the newest. The strategy never reads a run
+directory, the tree is git-ignored, and a failed write is a WARNING, never
+an abort. Since ADR-029 the same tree holds, at its root, the five state
+files the strategy does read; nothing under `runs/` is versioned, and the
+owner backs it up (section 5).
 
 **Configuration is one validated object.** `settings.Settings` (ADR-007) holds
 every environment knob with its type, default and, where a wrong value is
@@ -294,11 +297,11 @@ work.
 
 | File | Written by | Read by | Notes |
 | --- | --- | --- | --- |
-| `current_portfolio.csv` | you | step 2 | `SYMBOL,QUANTITY`, no header |
-| `next_portfolio.csv` | step 12 | you | Copy over `current_portfolio.csv`; it already holds the fills the broker confirmed (ADR-019) |
-| `cash_ledger.csv` | you, or `ENV_CASHFLOW` | step 2 | `date,amount,note` |
-| `trades_ledger.csv` | every confirmed fill | step 2 | Append-only; filled quantity and the broker's average price (ADR-019) |
-| `strategy_state.json` | step 9, when a rebalance was performed | step 9 | `last_resize_date`; versioned like the ledgers, written by the run only, never by hand (ADR-027) |
+| `runs/current_portfolio.csv` | you | step 2 | `SYMBOL,QUANTITY`, no header |
+| `runs/next_portfolio.csv` | step 12 | you | Copy over `current_portfolio.csv`; it already holds the fills the broker confirmed (ADR-019) |
+| `runs/cash_ledger.csv` | you, or `ENV_CASHFLOW` | step 2 | `date,amount,note` |
+| `runs/trades_ledger.csv` | every confirmed fill | step 2 | Append-only; filled quantity and the broker's average price (ADR-019) |
+| `runs/strategy_state.json` | step 9, when a rebalance was performed | step 9 | `last_resize_date`; git-ignored like the ledgers, written by the run only, never by hand (ADR-027) |
 | `.cache_candles/<token>.csv` | `CandleStore` | `CandleStore` | `date,open,high,low,close,volume`; git-ignored, safe to delete |
 | `.cache_candles/universe-<name>.txt` | `NseArchives`, on every successful fetch | `NseArchives`, when NSE is unreachable | The last-good constituents list, dated on its first line (ADR-020); git-ignored, safe to delete |
 | `runs/<date>/<time>-<mode>/` | every step, as it completes | you | Eleven files per run (ADR-006; `orders.csv` since ADR-019); git-ignored; `runs/latest` is a symlink to the newest. A `-plan` run writes this and nothing else (ADR-022) |
@@ -308,6 +311,14 @@ the snapshot is a human act. Since ADR-019 the snapshot records what the
 broker confirmed filled, at the broker's average price, so comparing it with
 the Kite positions page is a check, not a correction. `orders.csv` in the run
 directory has every order id and its verdict if the two disagree.
+
+Since ADR-029 nothing under `runs/` is in git: the five files at its root
+are the account's only copy, and cash is reconstructed from them with no
+broker reconciliation. Keep the checkout, or `RUNS_DIR`, somewhere Time
+Machine or a sync client covers; to keep a per-run diff and `git revert`,
+`git init` inside `runs/` with a private remote and commit the five root
+files after each run. The outer repository ignores `runs/` whole, so a
+nested repository is invisible to it.
 
 ## 6. How we work
 
@@ -462,7 +473,7 @@ and 019, which still refer to them by their old numbers; the last to close,
 
 - **ATR** Average True Range, here a simple 20-day mean of the true range. Used for sizing and the trailing stop.
 - **MA** Simple moving average: the mean of the last N closes (ADR-024; EMAs until then).
-- **Resize cadence** twelve or more days since `last_resize_date` in `strategy_state.json` (ADR-027).
+- **Resize cadence** twelve or more days since `last_resize_date` in `runs/strategy_state.json` (ADR-027).
 - **LTP** Last traded price, from Kite's batched `ltp()` endpoint.
 - **Series** The NSE suffix on a tradingsymbol (`-BE`, `-BZ`). `EQ` is the normal rolling-settlement series and has no suffix.
 - **tradingsymbol / instrument_token** Kite's human-readable name and numeric id for an instrument. Candles are keyed by token, orders by tradingsymbol.

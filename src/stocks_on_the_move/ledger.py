@@ -1,4 +1,4 @@
-"""The five state files: the portfolio snapshot, the two ledgers and the strategy state (ADR-004, ADR-020, ADR-027).
+"""The five state files: the portfolio snapshot, the two ledgers and the strategy state (ADR-020, ADR-027, ADR-029).
 
 Cash is never stored; it is reconstructed from the ledgers on every run. A
 trade reaches the ledger only through ``record_trade``.
@@ -36,8 +36,16 @@ def read_portfolio(path: str) -> dict[str, int]:
     return pf
 
 
+def _ensure_parent(path: str) -> None:
+    """Create the directory a state file is written to; a fresh checkout has no runs/ yet (ADR-029)."""
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
 def write_portfolio(path: str, pf: dict[str, int]) -> None:
     """Write the portfolio dict back to CSV (sorted for determinism)."""
+    _ensure_parent(path)
     with open(path, "w", newline="") as f:
         csv.writer(f).writerows(sorted(pf.items()))
     logger.info("Portfolio written → %s (%d lines)", path, len(pf))
@@ -46,6 +54,7 @@ def write_portfolio(path: str, pf: dict[str, int]) -> None:
 # Ledgers ------------------------------------------------------------------
 def _ensure_csv(path: str, header: list[str]) -> None:
     if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        _ensure_parent(path)
         with open(path, "w", newline="") as f:
             csv.writer(f).writerow(header)
 
@@ -172,6 +181,7 @@ def load_state(path: str) -> dict[str, Any]:
 
 
 def save_state(path: str, state: dict[str, Any]) -> None:
+    _ensure_parent(path)
     with open(path, "w") as f:
         json.dump(state, f, indent=2, sort_keys=True)
         f.write("\n")

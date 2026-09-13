@@ -657,3 +657,34 @@ def test_the_fraction_at_zero_buys_the_fragment_and_at_one_only_full_positions(m
     m.buy_candidates(ctx, ranks, bull=True, account_equity=ctx.portfolio.cash + 100_000.0)
     rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "candidates.csv")}
     assert (rows["AAA"]["decision"], rows["BBB"]["decision"]) == ("SKIP:below_min_fraction", "BUY")
+
+
+# ── ADR-029: the account lives at the root of runs/ and bootstraps from nothing ──
+
+
+def test_the_first_paper_run_on_an_absent_runs_dir_creates_the_account(make_context, tmp_path):
+    fresh = tmp_path / "fresh"
+    ctx = make_context(bull_market(DRIFTS), state_files=False, runs_dir=fresh, cut_off_pct=0.5)
+    ctx.universe = StaticUniverse(DRIFTS)
+    assert not fresh.exists()
+
+    run(ctx)
+
+    assert (fresh / "cash_ledger.csv").read_text() == "date,amount,note\n"
+    assert (fresh / "trades_ledger.csv").read_text().startswith(",".join(TRADE_COLUMNS) + "\n")
+    assert last_resize_date(load_state(str(fresh / "strategy_state.json"))) == TODAY
+    assert read_portfolio(str(fresh / "next_portfolio.csv")) == ctx.portfolio.positions != {}
+    bought = sum(float(r["cash_delta"]) for r in ledger_rows(str(fresh / "trades_ledger.csv")))
+    assert ctx.portfolio.cash == pytest.approx(ctx.settings.starting_cash + bought)  # cash began at STARTING_CASH
+
+
+def test_a_plan_on_an_absent_runs_dir_leaves_only_its_run_directory(make_context, tmp_path):
+    fresh = tmp_path / "fresh"
+    ctx = make_context(bull_market(DRIFTS), state_files=False, runs_dir=fresh, plan_only=True, artifacts=True)
+    ctx.universe = StaticUniverse(DRIFTS)
+
+    run(ctx)
+
+    assert ctx.portfolio.positions != {}  # it decided
+    written = sorted(p.name for p in fresh.iterdir())
+    assert written == sorted({ctx.artifacts.path.parent.name, "latest"})

@@ -59,12 +59,15 @@ Useful switches (the full list, with defaults, is in `.env.example`):
 
 | Path | Purpose |
 | --- | --- |
-| `current_portfolio.csv` | Positions going into the run (`SYMBOL,QUANTITY`, no header) |
-| `next_portfolio.csv` | Positions after the run; promote to `current_portfolio.csv` before the next one |
-| `cash_ledger.csv` | Deposits and withdrawals |
-| `trades_ledger.csv` | Every placed or paper trade with fees and slippage |
+| `runs/current_portfolio.csv` | Positions going into the run (`SYMBOL,QUANTITY`, no header) |
+| `runs/next_portfolio.csv` | Positions after the run; promote to `current_portfolio.csv` before the next one |
+| `runs/cash_ledger.csv` | Deposits and withdrawals |
+| `runs/trades_ledger.csv` | Every placed or paper trade with fees and slippage |
+| `runs/strategy_state.json` | The date of the last size rebalance (ADR-027) |
 | `.cache_candles/` | Incremental daily-candle cache per instrument token (git-ignored) |
-| `runs/<date>/<time>-<mode>/` | What each run decided: ranking, exits, sizes, candidates, trades, log, `run.json` (git-ignored; `runs/latest` is the newest) |
+| `runs/<date>/<time>-<mode>/` | What each run decided: ranking, exits, sizes, candidates, trades, log, `run.json`; `runs/latest` is the newest |
+
+Nothing under `runs/` is versioned: it is the account, and you back it up (ADR-029).
 
 ## Development
 
@@ -108,7 +111,7 @@ src/stocks_on_the_move/
   params.py       StrategyParams: the code's constants and the operator's knobs
   execution.py    prices, order placement, the wait for a fill, booking (ADR-019)
   universe.py     the symbols the strategy may hold
-  ledger.py       the portfolio snapshot and the two ledgers (ADR-004)
+  ledger.py       the portfolio snapshot, the two ledgers and the state file, all under runs/ (ADR-029)
   reporting.py    the artifact tables' columns and row builders
   context.py      RunContext, Portfolio, Fill, the token cache
   backtest.py     replay the pipeline over years of cached candles; warm / run / compare (ADR-023)
