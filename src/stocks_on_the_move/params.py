@@ -28,12 +28,12 @@ class StrategyParams:
     # ── fixed by the strategy; the values momentum.py carried (ADR-016) ──
     # Shortened from the book's 21/63/126 before version control, for a reason
     # nobody recorded; changing them is a strategy ADR with backtest evidence.
-    lookback_short: int = 5
-    lookback_mid: int = 15
-    lookback_long: int = 45
-    weight_short: float = 0.6
-    weight_mid: float = 0.3
-    weight_long: float = 0.1
+    lookback_short: int = 21
+    lookback_mid: int = 63
+    lookback_long: int = 126
+    weight_short: float = 1
+    weight_mid: float = 1
+    weight_long: float = 1
     reg_lookback: int = 90
     # Which momentum score ranks the universe: the trailing-return blend the code has always used, or the
     # book's annualised regression slope times R². The switch exists so the backtest can compare them

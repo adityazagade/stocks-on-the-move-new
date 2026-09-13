@@ -64,7 +64,7 @@ def composite_momentum(closes: pd.Series, params: StrategyParams) -> tuple[float
     r2 = 1 - ss_res / ss_tot if ss_tot else 0.0
 
     annual = annualise(float(slope), params.trading_days_yr)
-    score = comp * r2 if params.score == "blend" else annual * r2
+    score = comp if params.score == "blend" else annual * r2
     return score, annual, float(r2)
 
 
