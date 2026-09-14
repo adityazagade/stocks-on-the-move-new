@@ -34,7 +34,7 @@ from stocks_on_the_move.execution import (
     live_value,
     ltp_map,
     net_proceeds_for_sell,
-    outcome,
+    outcome_for,
     trade,
 )
 from stocks_on_the_move.indicators import Snapshot, SnapshotError
@@ -228,7 +228,7 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
                     d.symbol,
                     ";".join(d.check.reasons),
                 )
-            decision = outcome(d.intent, fill, not_sent="SKIP:no_price")
+            decision = outcome_for(ctx, d.intent, fill)
             price = fill.price if fill is not None and fill.filled > 0 else None
         rows.append(
             {
@@ -312,7 +312,7 @@ def resize_positions(ctx: RunContext, bull: bool, ranks: Sequence[RankItem] = ()
     # 1️⃣ sell downs first
     for intent in sells:
         fill = trade(ctx, intent)  # the quantity moves by what filled, or not at all (ADR-017, ADR-019)
-        rows[intent.symbol]["action"] = outcome(intent, fill)
+        rows[intent.symbol]["action"] = outcome_for(ctx, intent, fill)
 
     if not bull or pf.cash <= 0:
         for intent in buys:
@@ -332,7 +332,7 @@ def resize_positions(ctx: RunContext, bull: bool, ranks: Sequence[RankItem] = ()
             rows[intent.symbol]["action"] = "SKIP:no_cash"
             continue
         fill = trade(ctx, intent)
-        rows[intent.symbol]["action"] = outcome(intent, fill)
+        rows[intent.symbol]["action"] = outcome_for(ctx, intent, fill)
     ctx.artifacts.write_table("sizing", SIZING_COLUMNS, rows.values())
 
 
@@ -444,7 +444,7 @@ def buy_candidates(ctx: RunContext, ranks: list[RankItem], bull: bool, account_e
 
             intent = TradeIntent(r.symbol, "BUY", affordable_qty, "new_position", r.close)
             fill = trade(ctx, intent)  # the position is what filled, not what was asked (ADR-019)
-            row["decision"] = outcome(intent, fill)
+            row["decision"] = outcome_for(ctx, intent, fill)
             if filled_qty(fill):
                 account_equity = pf.cash + live_value(ctx)  # update for subsequent picks
                 row["cash_after"] = pf.cash

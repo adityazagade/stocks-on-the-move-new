@@ -585,7 +585,7 @@ def test_resize_leaves_the_quantity_when_the_sell_down_has_no_price(make_context
     assert ctx.portfolio.positions == {"FAT": 1000}
     assert broker.orders == []
     rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "sizing.csv")}
-    assert rows["FAT"]["action"] == "SKIP:not_placed"
+    assert rows["FAT"]["action"] == "SKIP:no_price"  # the executor's own reason, not a generic not_placed (ADR-034)
 
 
 def test_raise_cash_skips_a_holding_it_cannot_price_and_sells_the_next(ctx):
@@ -865,3 +865,63 @@ def test_on_the_fallback_rung_trade_to_trade_names_are_refused_and_the_run_goes_
     assert "WATCHED-BE" not in ctx.portfolio.positions and {"AAA", "BBB"} <= set(ctx.portfolio.positions)
     meta = json.loads((ctx.artifacts.path / "run.json").read_text())
     assert meta["price_bands"]["source"] == "fallback" and meta["stranded"] == {}
+
+
+# ── ADR-034: the limit price a BUY posts into a thin book ────────────────
+
+
+def test_a_limit_buy_is_refused_when_the_ask_is_far_from_the_last_and_a_sell_never_is(ctx, caplog):
+    init_cash_balance(ctx)
+    ctx.broker.quotes["NSE:WIDE-BE"] = Quote(last_price=100.0, best_bid=90.0, best_ask=104.0)  # 4% over the 3% cap
+    ctx.broker.quotes["NSE:FAIR-BE"] = Quote(last_price=100.0, best_bid=99.0, best_ask=103.0)  # exactly at the cap
+    ctx.broker.quotes["NSE:EMPTY-BE"] = Quote(last_price=100.0, best_bid=None, best_ask=None)
+
+    with caplog.at_level(logging.INFO, logger=LOG):
+        assert safe_buy(ctx, "WIDE-BE", 10) is None
+        assert safe_buy(ctx, "EMPTY-BE", 10) is None
+    assert booked(safe_buy(ctx, "FAIR-BE", 10)) == 103.0
+    assert booked(safe_sell(ctx, "WIDE-BE", 5)) == 90.0  # a 10% discount, and it goes: an exit is never held back
+    assert booked(safe_sell(ctx, "EMPTY-BE", 5)) == 100.0  # an empty book on a sell: the last price, as before
+
+    sent = [(o.symbol, o.side) for o in ctx.broker.orders]
+    assert sent == [("FAIR-BE", "BUY"), ("WIDE-BE", "SELL"), ("EMPTY-BE", "SELL")]
+    assert {i.symbol: why for i, why in ctx.portfolio.refusals.items()} == {
+        "WIDE-BE": "spread",
+        "EMPTY-BE": "empty_book",
+    }
+    assert "WIDE-BE: the best ask 104.00 is 4.0% above the last 100.00" in caplog.text
+    assert "EMPTY-BE: no ask in the book" in caplog.text
+
+
+def test_the_refusal_reason_reaches_candidates_csv_and_a_missing_quote_is_no_price(make_context):
+    broker = FakeBroker()
+    broker.add_equity("WIDE-BE", 96, trending_closes(120, start=100.0), end=TODAY)
+    last = broker.ltps["NSE:WIDE-BE"]
+    broker.quotes["NSE:WIDE-BE"] = Quote(last_price=last, best_bid=last * 0.99, best_ask=last * 1.05)
+    broker.add_equity("GHOST-BE", 97, trending_closes(120, start=100.0), end=TODAY)  # a -BE name with no quote at all
+    ctx = make_context(broker, cut_off_pct=1.0, artifacts=True)
+    init_cash_balance(ctx)
+    build_token_cache(ctx)
+    gather_snapshots(ctx, broker.instruments("NSE"))
+    ranks = [rank("WIDE-BE", close=last, ma100=last * 0.9), rank("GHOST-BE", close=last, ma100=last * 0.9)]
+
+    m.buy_candidates(ctx, ranks, bull=True, account_equity=ctx.portfolio.cash)
+
+    decisions = {r["symbol"]: r["decision"] for r in read_table(ctx.artifacts.path / "candidates.csv")}
+    assert decisions == {"WIDE-BE": "SKIP:spread", "GHOST-BE": "SKIP:no_price"}
+    assert ctx.portfolio.positions == {} and broker.orders == []
+
+
+def test_a_plan_refuses_the_same_buys_the_broker_would(make_context):
+    ctx = make_context(plan_only=True)
+    init_cash_balance(ctx)
+    ctx.broker.quotes["NSE:WIDE-BE"] = Quote(last_price=100.0, best_bid=99.0, best_ask=110.0)
+    assert safe_buy(ctx, "WIDE-BE", 10) is None
+    assert list(ctx.portfolio.refusals.values()) == ["spread"] and ctx.portfolio.orders == []
+
+
+def test_the_slippage_cap_is_the_operators(make_context):
+    ctx = make_context(max_entry_slippage_pct=0.10)
+    init_cash_balance(ctx)
+    ctx.broker.quotes["NSE:WIDE-BE"] = Quote(last_price=100.0, best_bid=90.0, best_ask=104.0)
+    assert booked(safe_buy(ctx, "WIDE-BE", 10)) == 104.0  # a wider cap lets the same ask through

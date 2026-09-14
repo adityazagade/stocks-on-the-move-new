@@ -6,7 +6,8 @@ was sent), and ``book`` writes the ledger row and applies the fill to the
 portfolio, the one place a position changes. ``BrokerExecutor`` sends the order
 and waits for its verdict; ``PlanExecutor`` sends nothing and reports every
 sendable intent filled in full at the price it would have gone out at, which
-is plan mode.
+is plan mode. An intent that is not sent at all leaves its reason in
+``portfolio.refusals``, which ``outcome_for`` reads for the tables (ADR-034).
 """
 
 from __future__ import annotations
@@ -74,35 +75,65 @@ class Executor(Protocol):
         ...
 
 
-def _price_for(ctx: RunContext, sym: str, side: Side) -> tuple[float, OrderType]:
-    """The price a trade is booked at, and the order type that implies.
+def _price_for(ctx: RunContext, sym: str, side: Side, qty: int) -> tuple[float, OrderType] | str:
+    """The price a trade goes out at and the order type that implies, or the reason there is none.
 
     Series without market orders (BE, BZ, ...) get a LIMIT at the top of the
-    opposite side of the book, falling back to the last price when the book is
-    empty; everything else is a MARKET order booked at the last traded price.
+    opposite side of the book. A BUY there is refused as ``empty_book`` when
+    there is no ask, and as ``spread`` when the ask sits more than
+    ``MAX_ENTRY_SLIPPAGE_PCT`` above the last price — the top of a thin book
+    can be the circuit. A SELL is never refused and falls back to the last
+    price when the book is empty: an exit that does not go out leaves the
+    risk on (ADR-034). Everything else is a MARKET order at the last traded
+    price, ``no_price`` when there is none.
     """
     if series_of(sym) in NO_MARKET_SERIES:
         key = f"NSE:{sym}"
-        q = ctx.broker.quote([key])[key]
-        top = q.best_ask if side == "BUY" else q.best_bid
-        return (top if top is not None else q.last_price), "LIMIT"
-    return ltp_map(ctx.broker, [sym]).get(sym, 0.0), "MARKET"
+        q = ctx.broker.quote([key]).get(key)
+        if q is None:
+            return "no_price"
+        if side == "SELL":
+            return (q.best_bid if q.best_bid is not None else q.last_price), "LIMIT"
+        if q.best_ask is None:
+            logger.info("%s: no ask in the book; BUY x%d not sent (ADR-034)", sym, qty)
+            return "empty_book"
+        cap = ctx.settings.max_entry_slippage_pct
+        if q.last_price > 0 and q.best_ask > q.last_price * (1.0 + cap):
+            logger.info(
+                "%s: the best ask %.2f is %.1f%% above the last %.2f, over MAX_ENTRY_SLIPPAGE_PCT=%.2f; "
+                "BUY x%d not sent (ADR-034)",
+                sym,
+                q.best_ask,
+                100 * (q.best_ask / q.last_price - 1),
+                q.last_price,
+                cap,
+                qty,
+            )
+            return "spread"
+        return q.best_ask, "LIMIT"
+    price = ltp_map(ctx.broker, [sym]).get(sym, 0.0)
+    return (price, "MARKET") if price > 0 else "no_price"
 
 
-def _sendable(ctx: RunContext, intent: TradeIntent) -> tuple[float, OrderType] | None:
-    """The price and order type the intent would go out at, or ``None`` with the reason logged."""
+def _sendable(ctx: RunContext, intent: TradeIntent) -> tuple[float, OrderType] | str:
+    """The price and order type the intent would go out at, or the reason it is not sent, logged."""
     sym, side, qty = intent.symbol, intent.side, intent.quantity
     if qty < strategy_params(ctx).min_shares:
-        return None
-    price_used, order_type = _price_for(ctx, sym, side)
+        return "min_shares"
+    priced = _price_for(ctx, sym, side, qty)
+    if isinstance(priced, str):
+        if priced == "no_price":
+            logger.warning("No price for %s; %s x%d skipped", sym, side, qty)
+        return priced
+    price_used, order_type = priced
     if price_used <= 0:
         logger.warning("No price for %s; %s x%d skipped", sym, side, qty)
-        return None
+        return "no_price"
     if side == "BUY":
         need = gross_cost_for_buy(ctx.settings, price_used, qty)
         if need > ctx.portfolio.cash + 1e-6:
             logger.info("Not enough cash for BUY %s x%d (need %.2f, have %.2f)", sym, qty, need, ctx.portfolio.cash)
-            return None
+            return "no_cash"
     return price_used, order_type
 
 
@@ -214,7 +245,8 @@ class BrokerExecutor:
 
     def execute(self, intent: TradeIntent) -> Fill | None:
         sendable = _sendable(self._ctx, intent)
-        if sendable is None:
+        if isinstance(sendable, str):
+            self._ctx.portfolio.refusals[intent] = sendable
             return None
         price, order_type = sendable
         return _place(self._ctx, intent.symbol, intent.side, intent.quantity, price, order_type)
@@ -229,7 +261,8 @@ class PlanExecutor:
     def execute(self, intent: TradeIntent) -> Fill | None:
         ctx = self._ctx
         sendable = _sendable(ctx, intent)
-        if sendable is None:
+        if isinstance(sendable, str):
+            ctx.portfolio.refusals[intent] = sendable
             return None
         price, order_type = sendable
         pf = ctx.portfolio
@@ -308,6 +341,18 @@ def outcome(intent: TradeIntent, fill: Fill | None, *, not_sent: str = "SKIP:not
     if fill.filled <= 0:
         return "SKIP:no_fill"
     return intent.side if fill.filled == intent.quantity else f"{intent.side}:partial"
+
+
+def outcome_for(ctx: RunContext, intent: TradeIntent, fill: Fill | None) -> str:
+    """``outcome``, naming the executor's own reason when nothing was sent (ADR-034).
+
+    ``SKIP:no_price``, ``SKIP:no_cash``, ``SKIP:min_shares``, ``SKIP:spread``,
+    ``SKIP:empty_book``; ``SKIP:not_placed`` only when no reason was recorded.
+    """
+    if fill is None:
+        reason = ctx.portfolio.refusals.get(intent)
+        return outcome(intent, None, not_sent=f"SKIP:{reason}" if reason else "SKIP:not_placed")
+    return outcome(intent, fill)
 
 
 def safe_buy(ctx: RunContext, sym: str, qty: int) -> Fill | None:

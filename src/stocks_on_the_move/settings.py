@@ -175,6 +175,15 @@ class Settings(BaseSettings):
         120, ge=1, le=900, description="Seconds to wait for an order to fill before cancelling what has not."
     )
     fill_poll_seconds: float = Field(2.0, ge=0.5, le=30, description="Seconds between two order-status polls.")
+    max_entry_slippage_pct: float = Field(
+        0.03,
+        ge=0,
+        description=(
+            "Do not send a limit BUY whose best ask is more than this fraction above the last price (ADR-034). "
+            "Applies to the series without market orders, where the top of a thin book can sit at the circuit; a "
+            "SELL is never held back. 0 buys only at or below the last price."
+        ),
+    )
 
     # ── Kite rate limiting ───────────────────────────────────────────────
     kite_rps: float = Field(2.0, ge=0, description="Ceiling on Kite REST calls per second (floored at 0.1).")
@@ -299,7 +308,10 @@ EXAMPLE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Scheduling", ("trading_weekday",)),
     ("Cash flow for this run", ("env_cashflow", "cashflow_note")),
     ("Friction", ("fees_pct", "slippage_pct")),
-    ("Order confirmation (ADR-019)", ("fill_timeout_seconds", "fill_poll_seconds")),
+    (
+        "Order placement and confirmation (ADR-019, ADR-034)",
+        ("fill_timeout_seconds", "fill_poll_seconds", "max_entry_slippage_pct"),
+    ),
     ("Kite rate limiting", ("kite_rps", "kite_max_retries", "candle_sleep_sec")),
     ("Logging", ("log_level",)),
     (

@@ -92,6 +92,7 @@ class Portfolio:
     trades: list[dict[str, Any]] = field(default_factory=list)  # the rows appended to the ledger this run
     orders: list[dict[str, Any]] = field(default_factory=list)  # every order sent this run (ADR-019)
     intents: list[tuple[TradeIntent, Fill | None]] = field(default_factory=list)  # every intent and its fate
+    refusals: dict[TradeIntent, str] = field(default_factory=dict)  # why an intent was not sent at all (ADR-034)
 
     def apply(self, fill: Fill, cash_delta: float, *, exit: bool = False) -> None:
         """The one place a position changes (ADR-022): by what filled, never by what was asked.
