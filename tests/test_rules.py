@@ -49,11 +49,12 @@ def test_params_from_default_settings_equal_the_code_defaults():
 def test_params_carry_the_settings_knobs(make_settings):
     params = StrategyParams.from_settings(make_settings(atr_period=14, cut_off_pct=0.3, max_atr_pct=0.2))
     assert (params.atr_period, params.cut_off_pct, params.max_atr_pct) == (14, 0.3, 0.2)
-    assert params.lookback_short == 5  # the code's constants are untouched by settings
+    assert params.lookback_short == 21  # the code's constants are untouched by settings
 
 
 def test_derived_windows():
-    assert P.history_days == 100 and P.score_history == 91 and P.stop_window == 40
+    # the long lookback drives both windows: max(100, 126 + 1, 90 + 1) and max(126, 90) + 1
+    assert P.history_days == 127 and P.score_history == 127 and P.stop_window == 40
 
 
 # ── the snapshot ─────────────────────────────────────────────────────────
@@ -108,11 +109,12 @@ def test_composite_momentum_perfect_log_linear_uptrend():
 
 def test_the_slope_score_is_the_annualised_slope_times_r2():
     closes = pd.Series(100.0 * np.exp(0.001 * np.arange(P.score_history + 10)))
-    blend, ann, r2 = composite_momentum(closes, P)
+    # "slope" is the default, so name both scores explicitly rather than leaning on P
+    blend, ann, r2 = composite_momentum(closes, dataclasses.replace(P, score="blend"))
     slope, ann_again, r2_again = composite_momentum(closes, dataclasses.replace(P, score="slope"))
     assert (ann_again, r2_again) == (ann, r2)  # the switch changes the score and nothing else
     assert slope == pytest.approx(ann * r2) and slope != blend
-    assert P.score == "blend"  # the live default
+    assert P.score == "slope"  # the live default
 
 
 def test_composite_momentum_insufficient_data():

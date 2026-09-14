@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from stocks_on_the_move.broker import Candle, Instrument, Order, OrderStatus, Quote
+from stocks_on_the_move.params import StrategyParams
 
 # Kite hands back datetimes with a fixed +05:30 offset; the CSV cache round-trips the same.
 IST_OFFSET = timezone(timedelta(hours=5, minutes=30))
@@ -49,6 +50,11 @@ def make_candles(
             )
         )
     return out
+
+
+# Candles a name needs before every rule will look at it: StrategyParams.history_days, with room to spare.
+# Tie it to the parameters rather than a literal, so a change to the lookbacks moves the fixtures with it.
+FULL_HISTORY = StrategyParams().history_days + 25
 
 
 def trending_closes(n: int, *, start: float = 100.0, daily: float = 0.002, seed: int = 0, noise: float = 0.0):

@@ -94,7 +94,7 @@ def test_run_dates_follow_the_weekday_and_move_to_the_next_trading_day():
 def test_overrides_are_typed_by_the_field_they_name():
     params = bt.parse_overrides(["lookback_short=21", "weight_short=0.5", "atr_period=14"], StrategyParams())
     assert (params.lookback_short, params.weight_short, params.atr_period) == (21, 0.5, 14)
-    assert params.lookback_mid == 15
+    assert params.lookback_mid == 63  # untouched fields keep their defaults
     with pytest.raises(ValueError, match="choose one of"):
         bt.parse_overrides(["nope=1"], StrategyParams())
     with pytest.raises(ValueError, match="expected int"):
@@ -125,7 +125,7 @@ def test_a_replay_over_the_fixtures_trades_carries_state_and_writes_its_files(re
     assert summary["weeks"] == 8 and summary["trades"] == len(trades) and summary["note"] == bt.SUMMARY_NOTE
     assert set(bt.COMPARE_FIELDS) <= set(summary)
     params = json.loads((tmp_path / "out" / "params.json").read_text())
-    assert params["params"]["lookback_short"] == 5 and "KITE_API_KEY" not in params["settings"]
+    assert params["params"]["lookback_short"] == 21 and "KITE_API_KEY" not in params["settings"]
     assert json.loads((tmp_path / "out" / "summary.json").read_text()) == summary
     # the state files it carried between dates stayed inside its own directory
     assert (tmp_path / "out" / "state" / "trades_ledger.csv").exists()
