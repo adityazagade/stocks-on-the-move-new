@@ -38,6 +38,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-031](ADR-031-a-local-operator-console-over-runs.md) | A local operator console over `runs/` | Implemented | 2026-09-14 |
 | [ADR-032](ADR-032-an-mprocs-cockpit-over-the-console-and-the-command.md) | An mprocs cockpit over the console and the command | Implemented | 2026-09-14 |
 | [ADR-033](ADR-033-rank-the-whole-universe-and-qualify-for-entry.md) | Rank the whole universe and qualify names for entry | Implemented | 2026-09-14 |
+| [ADR-034](ADR-034-tradability-at-entry.md) | Tradability at entry: the price band, the BZ series, and the limit price | Accepted | 2026-09-14 |
 
 ## Writing a new ADR
 
