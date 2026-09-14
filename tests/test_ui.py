@@ -25,7 +25,7 @@ from stocks_on_the_move.kite_auth import SessionRecord
 from stocks_on_the_move.ledger import append_cashflow
 from stocks_on_the_move.reporting import EXIT_COLUMNS
 from stocks_on_the_move.ui import runs as runs_mod
-from stocks_on_the_move.ui.app import create_app, main, parse_args
+from stocks_on_the_move.ui.app import create_app, main, open_when_up, parse_args
 from stocks_on_the_move.ui.launcher import Launcher, LauncherBusy
 
 UI_DIR = Path(__file__).resolve().parents[1] / "src" / "stocks_on_the_move" / "ui"
@@ -775,3 +775,27 @@ def test_append_cashflow_creates_the_ledger_with_its_header(tmp_path):
     path = tmp_path / "cash_ledger.csv"
     append_cashflow(str(path), date(2026, 9, 14), 250000, "seed")
     assert path.read_bytes() == b"date,amount,note\r\n2026-09-14,250000.00,seed\r\n"
+
+
+# ── the --open flag (ADR-032) ────────────────────────────────────────────────
+def test_parse_args_open_is_off_by_default():
+    assert parse_args([]).open is False
+    assert parse_args(["--open", "--port", "9000"]).open is True
+
+
+def test_open_when_up_waits_for_the_server_then_opens_once():
+    answers = iter([False, False, True])
+    opened: list[str] = []
+    slept: list[float] = []
+    assert open_when_up(
+        "http://x/", probe=lambda url: next(answers), opener=opened.append, attempts=10, pause=0.1, sleep=slept.append
+    )
+    assert opened == ["http://x/"] and slept == [0.1, 0.1]
+
+
+def test_open_when_up_gives_up_quietly():
+    opened: list[str] = []
+    assert not open_when_up(
+        "http://x/", probe=lambda url: False, opener=opened.append, attempts=3, pause=0.0, sleep=lambda s: None
+    )
+    assert opened == []

@@ -16,6 +16,9 @@ portfolio, cash and trades.
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`). It provisions the pinned
   Python from `.python-version` and every dependency. Nothing else to install.
 - A Zerodha Kite Connect API key and secret.
+- Optional: [mprocs](https://github.com/pvolok/mprocs) (`brew install mprocs`),
+  one command for the console, the browser tab and the on-demand plan,
+  settings check, tests and hooks (ADR-032).
 
 ## Setup
 
@@ -80,6 +83,12 @@ Promote page shows current against next beside the run's order verdicts
 and copies the file; the Account page records a deposit or withdrawal as
 one cash-ledger row. Those, and starting a run, are the console's only
 writes. The trades ledger is read-only everywhere.
+
+With mprocs installed, `mprocs` in the checkout is the one command: the
+console comes up and opens the browser tab (`--open`), and a plan, the
+settings check, the tests and the hooks wait in the list for `s`. There is
+no paper or live row on purpose; a booking run starts from the Today page
+or the shell (ADR-032).
 
 ## Files
 

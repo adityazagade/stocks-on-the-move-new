@@ -1,0 +1,32 @@
+# The cockpit (ADR-032): `mprocs` in the checkout starts the console and opens the browser tab; every
+# other row waits for `s`. Each row is a command the docs give by hand, and nothing here reads .env:
+# uv does, through --env-file. mprocs is optional (brew install mprocs); the rows run without it.
+#
+# There is no paper or live row on purpose. A booking run starts from the console's Today page, behind
+# its token and the typed word LIVE, or from the shell by the README's command. A row here starts on
+# one keystroke and asks nothing, so it never carries a run whose effect is an order.
+scrollback: 10000
+
+procs:
+  console:
+    # The operator console over runs/ (ADR-031), plus the browser tab once the port answers.
+    shell: uv run --env-file .env stocks-on-the-move-ui --open
+    stop: SIGINT
+  plan:
+    # A plan: logs in, decides every step, sends nothing and books nothing (ADR-022). Its directory
+    # appears on the console's Runs page. `x` stops it; the run's record then says failed:KeyboardInterrupt.
+    shell: uv run --env-file .env stocks-on-the-move
+    env:
+      PLAN_ONLY: "1"
+    autostart: false
+    stop: SIGINT
+  check:
+    # The configuration a run would see, secrets masked (ADR-007).
+    shell: uv run --env-file .env python -m stocks_on_the_move.settings --check
+    autostart: false
+  tests:
+    shell: uv run pytest -q
+    autostart: false
+  hooks:
+    shell: uv run pre-commit run --all-files
+    autostart: false

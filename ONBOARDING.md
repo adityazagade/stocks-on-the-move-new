@@ -101,6 +101,12 @@ output appears on the page with the Kite login as a link, the run directory
 it creates is linked as soon as it exists, and the run's log streams into
 its log tab while the twelve-step rail fills in.
 
+`mprocs` in the checkout (ADR-032, `brew install mprocs`) does the starting
+for you: the console comes up with the browser tab, and `plan`, `check`,
+`tests` and `hooks` wait in the list for `s`; `x` stops the selected one
+and `q` quits everything. There is no booking row: a paper or live run
+starts from the Today page or the shell.
+
 When you want a paper run that books, two things to know before you press
 enter:
 

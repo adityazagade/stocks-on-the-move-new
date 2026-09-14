@@ -1,6 +1,6 @@
 # ADR-032: An mprocs cockpit over the console and the command
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-14
 - **Last Updated**: 2026-09-14
 - **Author**: Aditya Zagade
@@ -189,6 +189,21 @@ One commit naming ADR-032, the golden test untouched:
 - mprocs: https://github.com/pvolok/mprocs
 - uv, `--env-file` precedence: a variable already in the environment is
   kept; checked on uv 0.12.9 while drafting.
+
+## Implementation Status
+
+Implemented on 2026-09-14, one commit after the ADR's own, the golden test
+untouched. `mprocs.yaml` at the root holds the five rows as decided, with a
+comment on the absent booking row; `--open` on the console is
+`open_when_up`, which polls the URL through an injected probe and calls an
+injected opener once, on a daemon thread started before uvicorn, with
+three tests; the README, ONBOARDING and CLAUDE.md lines. Validation: mprocs
+ran against a copy of the config with every row on demand and quit
+cleanly, listing the five names; the console started with `--open` under
+a `BROWSER` command that records the URL instead of opening a tab, and the
+URL recorded was the console's. The interactive half of step 4, a plan
+started with `s` and stopped with `x` in the real cockpit, is the owner's.
+The two questions in Notes stayed as drafted: five rows, no backtest row.
 
 ## Notes
 

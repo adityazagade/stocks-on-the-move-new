@@ -14,6 +14,11 @@ import asyncio
 import calendar
 import json
 import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+import webbrowser
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -43,6 +48,8 @@ DEFAULT_PORT = 8766
 LOOPBACK = "127.0.0.1"
 LOOPBACK_HOSTS: tuple[str, ...] = ("127.0.0.1", "localhost")
 LIVE_WORD = "LIVE"  # typed by the operator before a live booking run starts
+OPEN_ATTEMPTS = 60  # --open polls the port this many times, half a second apart, then gives up quietly (ADR-032)
+OPEN_PAUSE = 0.5
 
 
 @dataclass(frozen=True)
@@ -412,7 +419,37 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--port", type=int, default=DEFAULT_PORT, help=f"TCP port on 127.0.0.1 (default {DEFAULT_PORT})"
     )
+    parser.add_argument("--open", action="store_true", help="open the browser at the console once it answers")
     return parser.parse_args(argv)
+
+
+def _answers(url: str) -> bool:
+    """True once something is listening at ``url``; any HTTP status counts, a refused connection does not."""
+    try:
+        urllib.request.urlopen(url, timeout=1).close()
+    except urllib.error.HTTPError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def open_when_up(
+    url: str,
+    *,
+    probe: Callable[[str], bool] = _answers,
+    opener: Callable[[str], object] = webbrowser.open,
+    attempts: int = OPEN_ATTEMPTS,
+    pause: float = OPEN_PAUSE,
+    sleep: Callable[[float], object] = time.sleep,
+) -> bool:
+    """Open the browser at ``url`` once it answers, at most once; False when it never did (ADR-032)."""
+    for _ in range(attempts):
+        if probe(url):
+            opener(url)
+            return True
+        sleep(pause)
+    return False
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -423,7 +460,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(exc, file=sys.stderr)
         raise SystemExit(2) from None
     band = band_for(settings)
-    print(f"Console on http://{LOOPBACK}:{args.port}/  RUNS_DIR={band.runs_dir}  booking runs: {band.booking_mode}")
+    url = f"http://{LOOPBACK}:{args.port}/"
+    print(f"Console on {url}  RUNS_DIR={band.runs_dir}  booking runs: {band.booking_mode}", flush=True)
+    if args.open:
+        threading.Thread(target=open_when_up, args=(url,), daemon=True, name="console-open").start()
     uvicorn.run(create_app(settings), host=LOOPBACK, port=args.port, log_level="info")
 
 
