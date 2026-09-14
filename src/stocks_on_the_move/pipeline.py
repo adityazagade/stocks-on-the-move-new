@@ -117,8 +117,9 @@ def rank_step(ctx: RunContext, universe: list[Instrument]) -> list[RankItem]:
     the names with no score at all, listed but never placed.
     """
     params = strategy_params(ctx)
+    bands = price_bands(ctx)
     gather_snapshots(ctx, universe)
-    evaluations = [evaluate(ctx.snapshots[i.tradingsymbol], params) for i in universe]
+    evaluations = [evaluate(ctx.snapshots[i.tradingsymbol], params, bands) for i in universe]
     ctx.artifacts.write_table("universe", UNIVERSE_COLUMNS, [e.row() for e in evaluations])
     ranks = rank(evaluations, params)
     ctx.artifacts.write_table(
@@ -187,17 +188,36 @@ def decide_exits(
 
 
 def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
-    """Sell names that violate exit rules; every holding's verdict goes to exits.csv. Guarded against empty ranking."""
+    """Sell names that violate exit rules; every holding's verdict goes to exits.csv. Guarded against empty ranking.
+
+    A holding whose price band is below ``MIN_PRICE_BAND_PCT`` is held like
+    any other — it trades only in periodic call auctions, which no order from
+    here can reach — but it is named in a WARNING, in the ``band`` column and
+    under ``stranded`` in ``run.json``, because its exit is by hand (ADR-034).
+    """
     if not ranks:
         logger.warning("Ranking empty – skipping prune to avoid accidental liquidation")
         ctx.artifacts.write_table("exits", EXIT_COLUMNS, [])
         return
 
     pf = ctx.portfolio
+    params = strategy_params(ctx)
+    bands = price_bands(ctx)
     gather_snapshots(ctx, ())  # the run's rank step covered these; a direct call gets them here
     idx = {r.symbol: i for i, r in enumerate(ranks)}
     rows: list[dict[str, Any]] = []
-    for d in decide_exits(dict(pf.positions), ranks, ctx.snapshots, strategy_params(ctx)):
+    stranded: dict[str, float] = {}
+    for d in decide_exits(dict(pf.positions), ranks, ctx.snapshots, params):
+        band = bands.band_of(d.symbol)
+        if band is not None and params.min_price_band_pct > 0 and band < params.min_price_band_pct:
+            stranded[d.symbol] = band
+            logger.warning(
+                "%s is held at a %g%% price band, below MIN_PRICE_BAND_PCT=%g: it trades only in periodic call "
+                "auctions, which this run cannot reach; any exit is by hand (ADR-034)",
+                d.symbol,
+                band,
+                params.min_price_band_pct,
+            )
         decision = "HOLD"
         price: float | None = None
         if d.intent is not None:
@@ -218,6 +238,7 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
                 "pct_rank": d.pct_rank,
                 "close": d.ranked.close if d.ranked else None,
                 "ma100": d.ranked.ma100 if d.ranked else None,
+                "band": band,
                 "stop_level": d.check.stop_level,
                 "reasons": ";".join(d.check.reasons),
                 "decision": decision,
@@ -225,16 +246,19 @@ def prune_portfolio(ctx: RunContext, ranks: list[RankItem]) -> None:
             }
         )
     ctx.artifacts.write_table("exits", EXIT_COLUMNS, rows)
+    ctx.artifacts.record(stranded=stranded)
 
 
 # ── 9 ▸ size rebalance ───────────────────────────────────────────────────
-def resize_positions(ctx: RunContext, bull: bool) -> None:
+def resize_positions(ctx: RunContext, bull: bool, ranks: Sequence[RankItem] = ()) -> None:
     """Rebalance sizes toward ATR targets when the last rebalance is old enough (ADR-027); verdicts go to sizing.csv.
 
     Due when ``strategy_state.json`` records no rebalance, or one at least
     ``resize_after_days`` before the run date, or when ``FORCE_RESIZE`` is set.
     The date is written back when a rebalance was performed, trades or not;
-    a plan reads it and leaves it alone.
+    a plan reads it and leaves it alone. An increase into a name the entry
+    filters refuse is skipped — new money at new risk is what those filters
+    decide — and a decrease always goes (ADR-034).
     """
     pf = ctx.portfolio
     s = ctx.settings
@@ -296,8 +320,12 @@ def resize_positions(ctx: RunContext, bull: bool) -> None:
         ctx.artifacts.write_table("sizing", SIZING_COLUMNS, rows.values())
         return
 
+    disqualified = {r.symbol: r.reason for r in ranks if not r.qualified}
     prices = ltp_map(ctx.broker, [i.symbol for i in buys]) if buys else {}
     for intent in buys:
+        if intent.symbol in disqualified:  # new money into a name the entry filters refuse (ADR-034)
+            rows[intent.symbol]["action"] = f"SKIP:disqualified:{disqualified[intent.symbol]}"
+            continue
         price = prices.get(intent.symbol, 0.0)
         need = gross_cost_for_buy(ctx.settings, price, intent.quantity)
         if need > pf.cash + 1e-6:
@@ -527,7 +555,7 @@ def run(ctx: RunContext) -> None:
     raise_cash_if_needed(ctx, ranks)
 
     # 9) Size rebalance when the last one is twelve or more days old (ADR-027), cash-aware
-    resize_positions(ctx, bull)
+    resize_positions(ctx, bull, ranks=ranks)
 
     # 10) Cash left after re-sizing
     cash_left = pf.cash

@@ -789,3 +789,79 @@ def test_an_injected_band_lookup_is_used_as_it_is_and_recorded(make_context):
 
     meta = json.loads((ctx.artifacts.path / "run.json").read_text())
     assert meta["price_bands"] == {"source": "static", "as_of": None, "names": 0}
+
+
+# ── ADR-034: the band and the series decide what steps 9 and 11 may open ──
+
+
+def test_a_banded_name_keeps_its_rank_and_is_never_bought(make_context):
+    broker = bull_market(DRIFTS)
+    broker.add_equity("AUCTION-BE", 93, trending_closes(260, daily=0.006), end=TODAY)  # the strongest name of all
+    ctx = make_context(broker, cut_off_pct=1.0, artifacts=True)
+    ctx.universe = StaticUniverse({**DRIFTS, "AUCTION": 0.0})
+    ctx.bands = PriceBands({("AUCTION", "BE"): 2.0}, TODAY, "fresh")
+
+    run(ctx)
+
+    ranking = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "ranking.csv")}
+    assert ranking["AUCTION-BE"]["rank"] == "1"  # its place is its momentum
+    assert (ranking["AUCTION-BE"]["qualified"], ranking["AUCTION-BE"]["reason"]) == ("false", "price_band")
+    universe = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "universe.csv")}
+    assert universe["AUCTION-BE"]["status"] == "disqualified"
+    decisions = {r["symbol"]: r["decision"] for r in read_table(ctx.artifacts.path / "candidates.csv")}
+    assert decisions["AUCTION-BE"] == "SKIP:disqualified:price_band"
+    assert "AUCTION-BE" not in ctx.portfolio.positions and {"AAA", "BBB"} <= set(ctx.portfolio.positions)
+
+
+def test_a_holding_below_the_band_floor_is_held_reported_and_not_topped_up(make_context, caplog):
+    broker = bull_market(DRIFTS)
+    broker.add_equity("STUCK-BE", 94, trending_closes(260, daily=0.005), end=TODAY)
+    ctx = make_context(broker, cut_off_pct=1.0, artifacts=True, force_resize=True)
+    ctx.universe = StaticUniverse({**DRIFTS, "STUCK": 0.0})
+    ctx.bands = PriceBands({("STUCK", "BE"): 2.0}, TODAY, "fresh")
+    write_portfolio(ctx.settings.portfolio_file, {"STUCK-BE": 1})  # one share held; its ATR target is far above
+
+    with caplog.at_level(logging.WARNING, logger=LOG):
+        run(ctx)
+
+    assert ctx.portfolio.positions["STUCK-BE"] == 1  # held: no exit rule fired, and no top-up went either
+    assert "STUCK-BE is held at a 2% price band, below MIN_PRICE_BAND_PCT=5" in caplog.text
+    exits = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "exits.csv")}
+    assert (exits["STUCK-BE"]["decision"], exits["STUCK-BE"]["band"]) == ("HOLD", "2.000000")
+    sizing = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "sizing.csv")}
+    assert sizing["STUCK-BE"]["action"] == "SKIP:disqualified:price_band"
+    meta = json.loads((ctx.artifacts.path / "run.json").read_text())
+    assert meta["stranded"] == {"STUCK-BE": 2.0}
+
+
+def test_a_resize_decrease_of_a_disqualified_holding_still_goes(make_context):
+    broker = bull_market(DRIFTS)
+    broker.add_equity("STUCK-BE", 94, trending_closes(260, daily=0.005), end=TODAY)
+    last = broker.ltps["NSE:STUCK-BE"]
+    broker.quotes["NSE:STUCK-BE"] = Quote(last_price=last, best_bid=last * 0.99, best_ask=last * 1.01)
+    ctx = make_context(broker, cut_off_pct=1.0, artifacts=True, force_resize=True)
+    ctx.universe = StaticUniverse({**DRIFTS, "STUCK": 0.0})
+    ctx.bands = PriceBands({("STUCK", "BE"): 2.0}, TODAY, "fresh")
+    write_portfolio(ctx.settings.portfolio_file, {"STUCK-BE": 1000})  # far above its ATR target
+
+    run(ctx)
+
+    assert 0 < ctx.portfolio.positions["STUCK-BE"] < 1000  # the sell-down went; only new money is refused
+    sizing = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "sizing.csv")}
+    assert sizing["STUCK-BE"]["action"] == "SELL"
+
+
+def test_on_the_fallback_rung_trade_to_trade_names_are_refused_and_the_run_goes_on(make_context):
+    broker = bull_market(DRIFTS)
+    broker.add_equity("WATCHED-BE", 95, trending_closes(260, daily=0.006), end=TODAY)
+    ctx = make_context(broker, cut_off_pct=1.0, artifacts=True)
+    ctx.universe = StaticUniverse({**DRIFTS, "WATCHED": 0.0})
+    ctx.bands = PriceBands({}, None, "fallback")
+
+    run(ctx)
+
+    decisions = {r["symbol"]: r["decision"] for r in read_table(ctx.artifacts.path / "candidates.csv")}
+    assert decisions["WATCHED-BE"] == "SKIP:disqualified:price_band:fallback"
+    assert "WATCHED-BE" not in ctx.portfolio.positions and {"AAA", "BBB"} <= set(ctx.portfolio.positions)
+    meta = json.loads((ctx.artifacts.path / "run.json").read_text())
+    assert meta["price_bands"]["source"] == "fallback" and meta["stranded"] == {}

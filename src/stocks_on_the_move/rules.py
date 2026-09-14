@@ -2,8 +2,9 @@
 
 Regime, the filter chain and the ranking, the exit rules with the trailing
 stop, ATR sizing. Nothing here reads candles, prices, settings or the broker;
-the pipeline gathers one ``Snapshot`` per instrument and hands it in. A
-backtest calls the same functions.
+the pipeline gathers one ``Snapshot`` per instrument and hands it in, with
+the price bands the entry rules read (ADR-034). A backtest calls the same
+functions.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import Any
 
 from stocks_on_the_move.indicators import Snapshot, SnapshotError
 from stocks_on_the_move.params import StrategyParams
+from stocks_on_the_move.universe import NO_BANDS, NO_MARKET_SERIES, NON_COMPLIANT_SERIES, PriceBands, series_of
 
 logger = logging.getLogger(__name__)
 
@@ -95,14 +97,39 @@ class Evaluation:
         }
 
 
-def disqualification(snap: Snapshot, params: StrategyParams) -> str | None:
+def band_disqualification(symbol: str, params: StrategyParams, bands: PriceBands) -> str | None:
+    """``price_band`` when the daily band is below the floor; the series stands in when no bands came (ADR-034).
+
+    With the floor at zero the rule is off. On the fallback rung — no fresh
+    list and no copy — every series without market orders is refused as
+    ``price_band:fallback``, stricter than the rule it stands in for and
+    saying so. A name the list does not know passes: the list covers the
+    universe, and a miss is a symbol quirk, not a band.
+    """
+    if params.min_price_band_pct <= 0:
+        return None
+    if bands.fallback:
+        return "price_band:fallback" if series_of(symbol) in NO_MARKET_SERIES else None
+    band = bands.band_of(symbol)
+    if band is not None and band < params.min_price_band_pct:
+        return "price_band"
+    return None
+
+
+def disqualification(snap: Snapshot, params: StrategyParams, bands: PriceBands = NO_BANDS) -> str | None:
     """The first entry filter a scoreable name fails, or ``None`` when it may be bought.
 
-    In order: close above the trend average (ADR-024), 20-day volume, ATR as a
-    fraction of price, the gap filter (ADR-025). These say whether a name is
-    worth opening a position in; only the trend average and the gap rule also
-    say anything about closing one (ADR-033).
+    In order: the issuer's series and the price band, which say whether the
+    exchange will trade the name at all (ADR-034); then close above the trend
+    average (ADR-024), 20-day volume, ATR as a fraction of price, the gap
+    filter (ADR-025). These say whether a name is worth opening a position in;
+    only the trend average and the gap rule also say anything about closing
+    one (ADR-033).
     """
+    if series_of(snap.symbol) in NON_COMPLIANT_SERIES:
+        return "non_compliant"
+    if (reason := band_disqualification(snap.symbol, params, bands)) is not None:
+        return reason
     if snap.last <= snap.ma100:
         return "below_ma100"
     if snap.avg_vol_20 < params.min_volume:
@@ -114,8 +141,8 @@ def disqualification(snap: Snapshot, params: StrategyParams) -> str | None:
     return None
 
 
-def evaluate(snap: Snapshot, params: StrategyParams) -> Evaluation:
-    """Score one snapshot, and say whether the entry filters let it be bought (ADR-033).
+def evaluate(snap: Snapshot, params: StrategyParams, bands: PriceBands = NO_BANDS) -> Evaluation:
+    """Score one snapshot, and say whether the entry filters let it be bought (ADR-033, ADR-034).
 
     A name is *rankable* when there is a momentum score to place it by. When
     there is not — the snapshot failed to build (``error:<type>``), the history
@@ -152,7 +179,7 @@ def evaluate(snap: Snapshot, params: StrategyParams) -> Evaluation:
     if math.isnan(snap.score):
         logger.warning("Not enough data to rank for %s", sym)
         return verdict(reason="insufficient_data")
-    reason = disqualification(snap, params)
+    reason = disqualification(snap, params, bands)
     item = RankItem(
         sym,
         float(snap.score),

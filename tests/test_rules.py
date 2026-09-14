@@ -24,6 +24,7 @@ from stocks_on_the_move.rules import (
     unrankable,
 )
 from stocks_on_the_move.settings import Settings
+from stocks_on_the_move.universe import PriceBands, base_symbol, series_of
 
 TODAY = EVEN_WEEK_WEDNESDAY.date()
 P = StrategyParams()
@@ -292,3 +293,49 @@ def test_size_refuses_a_short_frame_and_a_failed_snapshot():
         size(snapshot("NEW", trending_closes(P.atr_period)), 100_000.0, P)
     with pytest.raises(SnapshotError, match="KeyError"):
         size(Snapshot.failed("GHOST", 0, KeyError("Cannot resolve instrument_token for NSE:GHOST")), 1.0, P)
+
+
+# ── ADR-034: tradability at entry ────────────────────────────────────────
+
+
+def banded(*pairs: tuple[str, float]) -> PriceBands:
+    return PriceBands({(base_symbol(sym), series_of(sym)): band for sym, band in pairs}, TODAY, "static")
+
+
+def test_a_non_compliant_series_is_disqualified_and_a_surveillance_one_is_not():
+    up = trending_closes(150, daily=0.002)
+    assert evaluate(snapshot("DEFAULTER-BZ", up), P).reason == "non_compliant"
+    assert evaluate(snapshot("SMEDEF-SZ", up), P).reason == "non_compliant"
+    assert evaluate(snapshot("WATCHED-BE", up), P).reason is None  # trade-to-trade on its own is fine (ADR-034)
+
+
+def test_the_price_band_floor_names_the_call_auction_names_and_nothing_else():
+    up = trending_closes(150, daily=0.002)
+    bands = banded(("AUCTION-BE", 2.0), ("WATCHED-BE", 5.0), ("WIDE", 20.0), ("FNO", math.inf))
+    assert evaluate(snapshot("AUCTION-BE", up), P, bands).reason == "price_band"
+    assert evaluate(snapshot("WATCHED-BE", up), P, bands).reason is None  # at the floor passes
+    assert evaluate(snapshot("WIDE", up), P, bands).reason is None
+    assert evaluate(snapshot("FNO", up), P, bands).reason is None  # No Band is unbounded
+    assert evaluate(snapshot("UNLISTED", up), P, bands).reason is None  # unknown to the list passes
+    off = dataclasses.replace(P, min_price_band_pct=0.0)
+    assert evaluate(snapshot("AUCTION-BE", up), off, bands).reason is None  # 0 disables the rule
+    tighter = dataclasses.replace(P, min_price_band_pct=10.0)  # the surveillance-depth dial (ADR-034)
+    assert evaluate(snapshot("WATCHED-BE", up), tighter, bands).reason == "price_band"
+    assert evaluate(snapshot("WIDE", up), tighter, bands).reason is None
+
+
+def test_the_tradability_rules_come_first_and_the_banded_name_is_still_ranked():
+    down = trending_closes(150, daily=-0.003)  # below its MA100 as well
+    verdict = evaluate(snapshot("AUCTION-BE", down), P, banded(("AUCTION-BE", 2.0)))
+    assert verdict.reason == "price_band" and verdict.rank is not None and verdict.rank.qualified is False
+    assert evaluate(snapshot("DEFAULTER-BZ", down), P, banded(("DEFAULTER-BZ", 2.0))).reason == "non_compliant"
+    assert evaluate(snapshot("AUCTION-BE", down), P).reason == "below_ma100"  # no band data: the chain as before
+
+
+def test_on_the_fallback_rung_the_series_stands_in_for_the_band():
+    up = trending_closes(150, daily=0.002)
+    fallback = PriceBands({}, None, "fallback")
+    assert evaluate(snapshot("WATCHED-BE", up), P, fallback).reason == "price_band:fallback"
+    assert evaluate(snapshot("PLAIN", up), P, fallback).reason is None
+    off = dataclasses.replace(P, min_price_band_pct=0.0)
+    assert evaluate(snapshot("WATCHED-BE", up), off, fallback).reason is None

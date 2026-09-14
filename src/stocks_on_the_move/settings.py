@@ -141,6 +141,15 @@ class Settings(BaseSettings):
             "least this fraction (ADR-025). 1 disables the rule."
         ),
     )
+    min_price_band_pct: float = Field(
+        5.0,
+        ge=0,
+        description=(
+            "Open a new position only in a name whose daily price band is at least this percent (ADR-034). A 2% "
+            "band marks ESM Stage II, which trades only in periodic call auctions: 5 excludes that and nothing else, "
+            "10 also excludes every 5% surveillance band. 'No Band' (the F&O names) always passes; 0 disables."
+        ),
+    )
 
     # ── Scheduling ───────────────────────────────────────────────────────
     trading_weekday: int = Field(
@@ -284,6 +293,7 @@ EXAMPLE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "min_volume",
             "max_atr_pct",
             "max_gap_pct",
+            "min_price_band_pct",
         ),
     ),
     ("Scheduling", ("trading_weekday",)),

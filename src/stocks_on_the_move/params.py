@@ -5,9 +5,9 @@ lookbacks and their weights, the regression window, the two moving-average
 periods, trading days in a year, the share floor. And the knobs the operator
 sets through ``Settings`` (ADR-007): the ATR period, the risk factor, the
 weight cap, the ranking cut-off, the stop multiple, the volume and ATR
-filters. A rule is a function of a snapshot and one of these, so the live run
-builds one from its settings and a backtest builds variants without touching
-the environment.
+filters, the price-band floor (ADR-034). A rule is a function of a snapshot
+and one of these, so the live run builds one from its settings and a backtest
+builds variants without touching the environment.
 """
 
 from __future__ import annotations
@@ -60,6 +60,7 @@ class StrategyParams:
     max_atr_pct: float = _setting_default("max_atr_pct")
     max_gap_pct: float = _setting_default("max_gap_pct")
     min_position_fraction: float = _setting_default("min_position_fraction")
+    min_price_band_pct: float = _setting_default("min_price_band_pct")
 
     @classmethod
     def from_settings(cls, settings: Settings) -> StrategyParams:
@@ -74,6 +75,7 @@ class StrategyParams:
             max_atr_pct=settings.max_atr_pct,
             max_gap_pct=settings.max_gap_pct,
             min_position_fraction=settings.min_position_fraction,
+            min_price_band_pct=settings.min_price_band_pct,
         )
 
     @property

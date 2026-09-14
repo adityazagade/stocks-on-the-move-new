@@ -42,6 +42,7 @@ SERIES_CODES: set[str] = {
     "IQ",
     "SM",
     "ST",
+    "SZ",  # SME, issuer non-compliant (ADR-034)
     "GC",
     "GS",
     # debt / partly-paid / rights etc.

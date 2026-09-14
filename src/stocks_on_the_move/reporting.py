@@ -31,7 +31,20 @@ RANKING_COLUMNS = [
 ]
 
 
-EXIT_COLUMNS = ["symbol", "qty", "rank", "pct_rank", "close", "ma100", "stop_level", "reasons", "decision", "price"]
+# `band` is the holding's daily price band in percent, `inf` for No Band, blank when unknown (ADR-034)
+EXIT_COLUMNS = [
+    "symbol",
+    "qty",
+    "rank",
+    "pct_rank",
+    "close",
+    "ma100",
+    "band",
+    "stop_level",
+    "reasons",
+    "decision",
+    "price",
+]
 
 
 SIZING_COLUMNS = ["symbol", "qty", "price", "atr", "risk_qty", "cap_qty", "target_qty", "delta", "action"]
