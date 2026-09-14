@@ -34,7 +34,7 @@ one module per job under `src/stocks_on_the_move/` (ADR-020):
 | `indicators.py` | the pure computations on prices and the `Snapshot` built once per instrument |
 | `params.py` | `StrategyParams`: the code's constants and the operator's knobs in one frozen value |
 | `execution.py` | prices, order placement, the wait for a fill, booking |
-| `universe.py` | the symbols the strategy may hold |
+| `universe.py` | the symbols the strategy may hold, and the price bands that say which may be opened (ADR-034) |
 | `ledger.py` | the portfolio snapshot and the two ledgers |
 | `reporting.py` | the artifact tables' columns and row builders |
 | `context.py` | `RunContext`, `Portfolio`, `Fill`, the token cache |
@@ -165,12 +165,12 @@ behind each step.
 | 3.5 | Kill switch | `liquidate_all` | Sells everything, writes `OUT_FILE`, returns; with `PLAN_ONLY=1` it plans the liquidation and sells nothing |
 | 4 | Universe | `NseArchives.symbols`, or the `UniverseSource` on the context | Public CSVs from NSE archives, no auth, with a last-good copy under `CACHE_DIR` for the day NSE is down (ADR-020); tests inject a `StaticUniverse`. Empty universe aborts the run |
 | 5 | Regime | `index_snapshot`, `regime` | Index close vs its 200-day simple moving average (ADR-024). Only gates buys, never sells |
-| 6 | Rank | `get_universe`, `rank_step` (`gather_snapshots`, `evaluate`, `rank`) | One candle read per instrument and holding into `ctx.snapshots`; scores, then qualifies; writes `universe.csv` and `ranking.csv`; see section 4 |
-| 7 | Exits | `prune_portfolio` (`decide_exits`, then `trade`) | Runs every week, bull or bear |
+| 6 | Bands, rank | `NsePriceBands.bands`, `get_universe`, `rank_step` (`gather_snapshots`, `evaluate`, `rank`) | The price bands first: NSE's daily list with a last-good copy, or the lookup on the context (ADR-034); then one candle read per instrument and holding into `ctx.snapshots`; scores, then qualifies; writes `universe.csv` and `ranking.csv`; see section 4 |
+| 7 | Exits | `prune_portfolio` (`decide_exits`, then `trade`) | Runs every week, bull or bear. A holding below `MIN_PRICE_BAND_PCT` is held and named: a WARNING, the `band` column, `stranded` in `run.json` (ADR-034) |
 | 8 | Raise cash | `raise_cash_if_needed` | Only when a withdrawal drove cash negative |
-| 9 | Resize | `resize_positions`, `size` | When `strategy_state.json` records no rebalance or one twelve or more days ago (ADR-027), or `FORCE_RESIZE=1`; writes the date back |
+| 9 | Resize | `resize_positions`, `size` | When `strategy_state.json` records no rebalance or one twelve or more days ago (ADR-027), or `FORCE_RESIZE=1`; writes the date back. An increase into a disqualified name is skipped, a decrease always goes (ADR-034) |
 | 10 | Mark to market | `live_value` | Batched `ltp()` |
-| 11 | Buys | `buy_candidates`, `size`, `safe_buy` | Bull regime and cash > 0 only. Every order waits for the broker's verdict (`await_fill`, ADR-019) and books what filled |
+| 11 | Buys | `buy_candidates`, `size`, `safe_buy` | Bull regime and cash > 0 only. Every order waits for the broker's verdict (`await_fill`, ADR-019) and books what filled. A limit BUY whose ask is over `MAX_ENTRY_SLIPPAGE_PCT` above the last, or into an empty book, is not sent (ADR-034) |
 | 12 | Snapshot | `write_portfolio` | Writes `OUT_FILE`; the human promotes it to `PORTFOLIO_FILE`. A plan logs what it would hold instead |
 
 ### Filters and scoring (step 6)
@@ -188,12 +188,25 @@ assigned rather than measured, and zero is the middle of a list whose scores
 go negative.
 
 Second, **may the name be bought?** These are the entry filters, in order,
-and the first one that fails names the verdict:
+and the first one that fails names the verdict. The first two ask whether
+the exchange will trade the name at all (ADR-034); the rest ask about the
+price series.
 
-1. Last close above the 100-day simple moving average (ADR-024) — `below_ma100`.
-2. 20-day average volume at least `MIN_VOLUME` — `volume`.
-3. ATR(20) no more than `MAX_ATR_PCT` of price — `atr_pct`.
-4. No single-day close-to-close move of `MAX_GAP_PCT` (default 15 %) or more
+1. Not a `BZ` or `SZ` series, an issuer that failed its listing obligations
+   — `non_compliant`. `BE`, trade-to-trade under surveillance, is *not*
+   refused: a weekly delivery rotation never sells intraday, and the
+   limit-order path handles the series.
+2. Daily price band at least `MIN_PRICE_BAND_PCT` (default 5 %) —
+   `price_band`. A 2 % band is ESM Stage II, which trades only in periodic
+   call auctions that no order from here can reach; 5 excludes that and
+   nothing else, 10 also excludes every 5 % surveillance band. `No Band`
+   passes, `0` disables. When neither NSE's list nor its copy could be had,
+   the series stands in and every trade-to-trade name reads
+   `price_band:fallback`.
+3. Last close above the 100-day simple moving average (ADR-024) — `below_ma100`.
+4. 20-day average volume at least `MIN_VOLUME` — `volume`.
+5. ATR(20) no more than `MAX_ATR_PCT` of price — `atr_pct`.
+6. No single-day close-to-close move of `MAX_GAP_PCT` (default 15 %) or more
    in the last 90 trading days (ADR-025), `1` disables the rule — `gap`.
 
 A name that fails one of these is **disqualified**, not dropped: it is still
@@ -209,8 +222,8 @@ filters, so its width no longer moves with market breadth — and the same
 percentage covers many more names than it used to.
 
 Every instrument's verdict — `ranked`, `disqualified` or `excluded`, with the
-rule that stopped it (`history`, `below_ma100`, `volume`, `atr_pct`, `gap`,
-`insufficient_data`, `error:<type>`) and every metric measured whatever
+rule that stopped it (`history`, `non_compliant`, `price_band`, `below_ma100`,
+`volume`, `atr_pct`, `gap`, `insufficient_data`, `error:<type>`) and every metric measured whatever
 failed — is a row in the run's `universe.csv` (ADR-006), so a symbol
 disappearing from the ranking is a file open, not a re-run at DEBUG.
 
@@ -231,7 +244,11 @@ A holding is sold when any of these hold:
 The volume floor and the ATR ceiling are deliberately **not** here. Both were
 chosen to keep a name out of a new position, neither as a reason to close a
 working one; before ADR-033 they were exits only because failing them dropped
-a name out of the ranking (ADR-033).
+a name out of the ranking (ADR-033). Nor are the two tradability rules
+(ADR-034). A holding whose band has fallen below `MIN_PRICE_BAND_PCT` trades
+only in periodic call auctions, which no order from here can reach, so it is
+held and named for you — a WARNING, the `band` column of `exits.csv`,
+`stranded` in `run.json` — and its exit is by hand.
 
 Sold symbols go into `ctx.portfolio.sold` and are not bought back in the
 same run. A holding that should be sold but cannot be priced (no quote, no
@@ -263,6 +280,18 @@ successful fetch to `CACHE_DIR/universe-<name>.txt` and reads it back, with a
 WARNING naming its age, on the day NSE archives are unreachable (ADR-020). An
 empty universe still aborts the run; the copy only stands in for an outage,
 never for a missing list.
+
+**The price-band list has one too, and a floor under it.** `NsePriceBands`
+walks back from the run date to the last published `sec_list_DDMMYYYY.csv`
+(the run date's own appears only after the day), keeps it at
+`CACHE_DIR/price-bands.csv` dated with the file's date, warns on the copy's
+age and again past ten days, and with no copy at all returns the fallback
+rung, where the series stands in for the band (ADR-034). It is fetched with
+`urllib`, a browser agent and a timeout: NSE's archive holds a connection
+from Python's default agent open indefinitely. A `RunContext` with
+`bands=None` reaches this live source; tests, the golden run and the
+backtest inject `NO_BANDS`, the permissive lookup, as they inject
+`StaticUniverse`.
 
 **Rules are pure functions of a snapshot and the parameters** (ADR-021).
 `gather_snapshots` in `pipeline.py` is the one place the candle store is read:
@@ -323,7 +352,12 @@ statement.
 priced from a batched `ltp()`. Series in `NO_MARKET_SERIES` (`BE`, `BZ`,
 `BT`, ...) trade in a no-market-order segment, so they get limit orders at
 the best bid or ask from a `quote()` depth call. `series_of` and
-`base_symbol` do the parsing; both are unit tested.
+`base_symbol` do the parsing; both are unit tested. A limit BUY is not sent
+when the ask sits more than `MAX_ENTRY_SLIPPAGE_PCT` above the last price or
+the book is empty; a SELL is never held back, because an exit that does not
+go out leaves the risk on (ADR-034). The reason an intent was not sent is on
+`portfolio.refusals` and in the tables as `SKIP:spread`, `SKIP:empty_book`,
+`SKIP:no_price`, `SKIP:no_cash`.
 
 **All scheduling is IST.** The weekday check and the rebalance cadence use
 `ist_now()`, the candle window ends on the IST date (ADR-018), and candle
@@ -366,6 +400,7 @@ work.
 | `runs/strategy_state.json` | step 9, when a rebalance was performed | step 9 | `last_resize_date`; git-ignored like the ledgers, written by the run only, never by hand (ADR-027) |
 | `.cache_candles/<token>.csv` | `CandleStore` | `CandleStore` | `date,open,high,low,close,volume`; git-ignored, safe to delete |
 | `.cache_candles/universe-<name>.txt` | `NseArchives`, on every successful fetch | `NseArchives`, when NSE is unreachable | The last-good constituents list, dated on its first line (ADR-020); git-ignored, safe to delete |
+| `.cache_candles/price-bands.csv` | `NsePriceBands`, on every successful fetch, plan runs included | `NsePriceBands`, when NSE is unreachable | The last-good price-band list, dated with the file's own date on its first line (ADR-034); git-ignored, safe to delete |
 | `runs/<date>/<time>-<mode>/` | every step, as it completes | you | Eleven files per run (ADR-006; `orders.csv` since ADR-019); git-ignored; `runs/latest` is a symlink to the newest. A `-plan` run writes this and nothing else (ADR-022) |
 
 The gap between step 12 and the next run's step 2 is deliberate: promoting

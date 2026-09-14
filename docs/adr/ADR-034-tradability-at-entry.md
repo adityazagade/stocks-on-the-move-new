@@ -1,6 +1,6 @@
 # ADR-034: Tradability at entry: the price band, the BZ series, and the limit price
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-14
 - **Last Updated**: 2026-09-14
 - **Author**: Aditya Zagade
@@ -435,6 +435,50 @@ No band file, no new positions that week.
 Accepted by the owner on 2026-09-14, on the plan as written, with the three
 open questions settled: `BZ` excluded, the limit-price guard in this ADR,
 the staleness threshold at 10 days on the reasoning above.
+
+Implemented on 2026-09-14 in three commits after the ADR's own, on a suite
+first restored to green — the owner's `819f95a` had set `ACCOUNT_VALUE`'s
+default to `0` and left eleven tests buying with no cash, fixed test-only
+and outside this ADR.
+
+- **The band source** (`universe.py`): `PriceBands`, the frozen lookup keyed
+  on `(symbol, series)` with `band_of` matching a Kite tradingsymbol exactly
+  and then on the symbol alone when it names one row; `fetch_price_bands`,
+  the walk-back over at most 7 days; `NsePriceBands`, the copy at
+  `CACHE_DIR/price-bands.csv` dated with the file's own date, the age
+  warnings at 10 days, the `fallback` rung. `RunContext.bands` is the
+  resolved value, `None` the live source, which `run` resolves once before
+  the rank step and records in `run.json` as `price_bands`. `conftest.py`,
+  `test_golden.py` and `backtest.simulate` inject `NO_BANDS`; a test proves
+  a context without it reaches `NsePriceBands`.
+- **A finding that changed the fetch.** `pandas.read_csv` against
+  `nsearchives.nseindia.com` with Python's default user agent hangs
+  indefinitely — NSE holds the connection open — where `urllib` with a
+  browser agent returns the file in about a second and a 404 in a tenth. The
+  fetch is `urllib` with that agent and a 15-second timeout, and a transport
+  error ends the walk-back rather than repeating it for eight dates. The
+  existing universe fetch in `nse_universe_symbols` still uses
+  `pandas.read_csv`, against `archives.nseindia.com`, and has not shown the
+  behaviour; it is noted here, not changed.
+- **The rules** (`rules.py`): `non_compliant` for `BZ` and `SZ` — `SZ`
+  added to `SERIES_CODES` so `series_of` can see it — then
+  `band_disqualification`, both ahead of `below_ma100`. `evaluate` and
+  `disqualification` take the lookup as an argument, defaulting to
+  `NO_BANDS`. `MIN_PRICE_BAND_PCT` on `Settings` and `StrategyParams`.
+- **The holding below the floor** (`prune_portfolio`): the WARNING, the
+  `band` column of `exits.csv` (`inf` for No Band, blank when unknown), and
+  `stranded` in `run.json`. **Resize** takes the ranking and skips an
+  increase into any disqualified name as `SKIP:disqualified:<reason>`.
+- **The limit guard** (`execution.py`): `_price_for` refuses a BUY on the
+  LIMIT path as `spread` or `empty_book`, never a SELL, and answers
+  `no_price` for a `-BE` name with no quote where it used to raise
+  `KeyError`. `_sendable` returns the reason, the executors record it on
+  `portfolio.refusals`, and `outcome_for` prints it, so the tables read
+  `SKIP:spread`, `SKIP:no_cash`, `SKIP:no_price` where they read
+  `SKIP:not_placed`. `MAX_ENTRY_SLIPPAGE_PCT` on `Settings`.
+- **The golden files** moved by the blank `band` column of `exits.csv` in
+  both weeks and by nothing else, checked by dropping the column and
+  comparing frame to frame; the suite is 347 tests, `ty` clean.
 
 ## Notes
 
