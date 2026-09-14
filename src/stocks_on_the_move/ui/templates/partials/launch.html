@@ -1,0 +1,23 @@
+<div id="launch" {% if child and child.running %}hx-get="/launch" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+{% if child %}
+<p class="meta">{{ 'plan' if child.mode == 'plan' else band.booking_mode }} run started {{ child.started.strftime('%H:%M:%S') }} IST:
+  {% if child.running %}<span class="badge status-running">running</span>{% elif child.returncode == 0 %}<span class="badge status-completed">exited 0</span>{% else %}<span class="badge status-failed">exited {{ child.returncode }}</span>{% endif %}
+  {% if created %} · <a href="/runs/{{ created.id }}">{{ created.id }}</a> <span class="badge status-{{ created.display_status }}">{{ created.display_status }}</span>{% endif %}</p>
+<pre class="log child">{% for line in child.lines %}{% if line.strip().startswith('http') %}<a href="{{ line.strip() }}" target="_blank" rel="noopener">open the Kite login in the browser</a>{% else %}{{ line }}{% endif %}
+{% endfor %}</pre>
+{% endif %}
+{% if not (child and child.running) %}
+<form method="post" action="/runs/start" class="start">
+  <input type="hidden" name="{{ token_field }}" value="{{ token }}">
+  <button type="submit" name="mode" value="plan" class="btn plan">Plan</button>
+  {% if band.booking_mode == 'live' %}
+  <label class="confirm">type <code>LIVE</code> to send real orders <input type="text" name="confirm" autocomplete="off" placeholder="LIVE"></label>
+  <button type="submit" name="mode" value="book" class="btn live">Book: LIVE</button>
+  {% elif band.booking_mode == 'kill' %}
+  <span class="meta">no booking button while KILL_SWITCH=1</span>
+  {% else %}
+  <button type="submit" name="mode" value="book" class="btn paper">Book: paper</button>
+  {% endif %}
+</form>
+{% endif %}
+</div>

@@ -92,6 +92,15 @@ would be and where `RUNS_DIR` points, which is the paper-mode trap below
 made visible. A run whose `run.json` still says `running` while its log has
 been silent for ten minutes is shown as abandoned; the file is left alone.
 
+The Today page starts a run too: a plan with one button, a booking run with
+another, and a live environment asks you to type `LIVE` first. The console
+starts the same command as a child process and sets `PLAN_ONLY` alone, so
+whether the booking run is paper or live is the `.env` the console was
+started from; `KILL_SWITCH=1` gets no booking button at all. The child's
+output appears on the page with the Kite login as a link, the run directory
+it creates is linked as soon as it exists, and the run's log streams into
+its log tab while the twelve-step rail fills in.
+
 When you want a paper run that books, two things to know before you press
 enter:
 

@@ -71,7 +71,11 @@ uv run --env-file .env stocks-on-the-move-ui    # --port moves it off 8766
 It binds to the loopback interface only, computes no number of its own and
 imports nothing from the strategy: a figure on a page is the figure in the
 file. The band across the top says whether a booking run from this
-environment would be paper or live, and where `RUNS_DIR` points.
+environment would be paper or live, and where `RUNS_DIR` points. The Today
+page shows the weekday guard, the Kite session and the newest run, and
+starts a plan or a booking run as a child of the console, the same command
+with `PLAN_ONLY` set and nothing else; a live environment asks for the word
+`LIVE` first, and the run's log streams onto its page as it goes.
 
 ## Files
 

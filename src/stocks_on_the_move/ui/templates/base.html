@@ -13,11 +13,12 @@
 <header class="band">
   <span class="band-mode">{{ band.booking_mode }}</span>
   <span class="band-text">
-    {% if band.booking_mode == 'live' %}a booking run from this environment <strong>sends orders to Kite</strong>{% else %}a booking run from this environment sends no order and still writes the ledgers{% endif %}
+    {% if band.booking_mode == 'live' %}a booking run from this environment <strong>sends orders to Kite</strong>{% elif band.booking_mode == 'kill' %}<strong>KILL_SWITCH=1</strong>: a booking run from this environment liquidates everything{% else %}a booking run from this environment sends no order and still writes the ledgers{% endif %}
     · RUNS_DIR <code>{{ band.runs_dir }}</code>{% if band.strategy %} · STRATEGY <code>{{ band.strategy }}</code>{% endif %}
   </span>
 </header>
 <nav class="top">
+  <a href="/" class="{{ 'active' if nav == 'today' }}">Today</a>
   <a href="/runs" class="{{ 'active' if nav == 'runs' }}">Runs</a>
   <a href="/account" class="{{ 'active' if nav == 'account' }}">Account</a>
   <a href="/research" class="{{ 'active' if nav == 'research' }}">Research</a>

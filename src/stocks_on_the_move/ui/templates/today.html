@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Today{% endblock %}
+{% block content %}
+<h1>Today <small>{{ today.strftime('%A %Y-%m-%d %H:%M') }} IST</small></h1>
+{% if error %}<p class="warn error"><strong>Not started.</strong> {{ error }}</p>{% endif %}
+<dl class="facts">
+  <dt>Trading weekday</dt>
+  <dd>{% if weekday_ok %}<strong>today</strong>: TRADING_WEEKDAY={{ band.trading_weekday }} ({{ weekday_name }}){% else %}TRADING_WEEKDAY={{ band.trading_weekday }} ({{ weekday_name }}) and today is {{ today.strftime('%A') }}: a booking run exits at the weekday guard, a plan runs any day{% endif %}</dd>
+  <dt>Kite session</dt>
+  <dd>{% if session.live %}live for <code>{{ session.user_id }}</code>, issued {{ session.issued_at }} via {{ session.source }}, good until 06:00 IST{% elif session.user_id %}expired (issued {{ session.issued_at }}): the next run opens the Kite login{% else %}none cached: the next run opens the Kite login{% endif %}</dd>
+  <dt>Booking run</dt>
+  <dd>{% if band.booking_mode == 'live' %}<strong>LIVE</strong>: sends orders to Kite (ALLOW_KITE_EXECUTION=1) and books the fills{% elif band.booking_mode == 'kill' %}<strong>KILL_SWITCH=1</strong>: a booking run would liquidate everything; the console does not start one{% else %}paper: sends no order and still writes the ledgers under <code>{{ band.runs_dir }}</code>{% endif %}</dd>
+  {% if band.env_cashflow %}<dt>ENV_CASHFLOW</dt><dd><strong>{{ band.env_cashflow }}</strong> is set: every booking run appends that row to the cash ledger. Unset it after one run.</dd>{% endif %}
+  {% if band.plan_only_env %}<dt>PLAN_ONLY</dt><dd>1 in the environment: a run from the shell is a plan; the booking button below overrides it for that one run</dd>{% endif %}
+  <dt>Newest run</dt>
+  <dd>{% if newest %}<a href="/runs/{{ newest.id }}">{{ newest.id }}</a> <span class="badge mode-{{ newest.mode }}">{{ newest.mode }}</span> <span class="badge status-{{ newest.display_status }}">{{ newest.display_status }}</span>{% else %}none under {{ band.runs_dir }}{% endif %}</dd>
+</dl>
+<h2>Start a run</h2>
+{% include "partials/launch.html" %}
+{% endblock %}

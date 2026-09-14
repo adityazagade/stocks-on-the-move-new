@@ -234,11 +234,13 @@ def is_number(value: object) -> bool:
     return True
 
 
-def read_log(run: RunInfo, *, max_lines: int = 2000) -> list[str]:
+def read_log(run: RunInfo, *, max_lines: int | None = 2000) -> list[str]:
+    """The run's log lines, the last ``max_lines`` of them, or all of them for ``None``."""
     path = run.path / "run.log"
     if not path.is_file():
         return []
-    return path.read_text(errors="replace").splitlines()[-max_lines:]
+    lines = path.read_text(errors="replace").splitlines()
+    return lines if max_lines is None else lines[-max_lines:]
 
 
 def epoch_seconds(day: str) -> int:

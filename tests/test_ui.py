@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -20,9 +21,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from stocks_on_the_move.context import IST
+from stocks_on_the_move.kite_auth import SessionRecord
 from stocks_on_the_move.reporting import EXIT_COLUMNS
 from stocks_on_the_move.ui import runs as runs_mod
 from stocks_on_the_move.ui.app import create_app, main, parse_args
+from stocks_on_the_move.ui.launcher import Launcher, LauncherBusy
 
 UI_DIR = Path(__file__).resolve().parents[1] / "src" / "stocks_on_the_move" / "ui"
 GOLDEN = Path(__file__).parent / "fixtures" / "golden"
@@ -430,3 +433,182 @@ def test_main_refuses_a_bad_environment_with_the_settings_error(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         main([])
     assert exc.value.code == 2
+
+
+# ── stage two: the Today page, the launcher, the streamed log ────────────────
+STUB = """
+import json, os, pathlib
+mode = "plan" if os.environ.get("PLAN_ONLY") == "1" else "paper"
+print("Log in to Kite:")
+print("  https://kite.zerodha.com/connect/login?api_key=KEY123&v=3")
+plan, allow = os.environ.get("PLAN_ONLY"), os.environ.get("ALLOW_KITE_EXECUTION")
+print("PLAN_ONLY=%s ALLOW_KITE_EXECUTION=%s" % (plan, allow))
+d = pathlib.Path(os.environ["RUNS_DIR"]) / "2026-09-14" / ("120500-" + mode)
+d.mkdir(parents=True)
+meta = {"started": "2026-09-14T12:05:00+05:30", "finished": "2026-09-14T12:06:00+05:30", "status": "completed",
+        "mode": mode, "equity_after": 5.0, "positions_after": {}}
+(d / "run.json").write_text(json.dumps(meta))
+"""
+SLOW = "import time; time.sleep(30)"
+
+
+def _launcher(runs_tree: Path, *, allow: bool = False, command=None) -> Launcher:
+    env = {"RUNS_DIR": str(runs_tree), "ALLOW_KITE_EXECUTION": "1" if allow else "0"}
+    return Launcher(command or [sys.executable, "-c", STUB], env=env, now=lambda: NOW)
+
+
+@pytest.fixture
+def launched(make_settings, runs_tree):
+    """``launched(allow=..., kill=..., command=...)`` -> (client, launcher) over a stub child, killed at teardown."""
+    made: list[Launcher] = []
+
+    def make(*, allow: bool = False, kill: bool = False, command=None) -> tuple[TestClient, Launcher]:
+        settings = make_settings(state_files=False, runs_dir=runs_tree, allow_kite_execution=allow, kill_switch=kill)
+        launcher = _launcher(runs_tree, allow=allow, command=command)
+        made.append(launcher)
+        app = create_app(settings, now=lambda: NOW, allowed_hosts=["testserver"], launcher=launcher, token="tok")
+        return TestClient(app), launcher
+
+    yield make
+    for launcher in made:
+        child = launcher.current
+        if child is not None and child.running:
+            child.process.kill()
+            child.wait(10)
+
+
+def _start(client: TestClient, **fields):
+    return client.post("/runs/start", data={"_token": "tok", **fields}, follow_redirects=False)
+
+
+def test_launcher_overlays_only_the_mode_and_captures_the_output(runs_tree):
+    launcher = _launcher(runs_tree)
+    child = launcher.start("plan")
+    assert child.wait(20) == 0
+    assert "PLAN_ONLY=1 ALLOW_KITE_EXECUTION=0" in child.lines
+    assert (runs_tree / "2026-09-14" / "120500-plan" / "run.json").exists()
+    assert not launcher.busy
+    with pytest.raises(ValueError):
+        launcher.start("live")
+
+
+def test_launcher_runs_one_child_at_a_time(runs_tree):
+    launcher = _launcher(runs_tree, command=[sys.executable, "-c", SLOW])
+    child = launcher.start("book")
+    try:
+        assert launcher.busy
+        with pytest.raises(LauncherBusy):
+            launcher.start("plan")
+    finally:
+        child.process.kill()
+        child.wait(10)
+    assert not launcher.busy and child.returncode != 0
+
+
+def test_today_page_shows_the_weekday_guard_the_session_and_the_newest_run(launched, tmp_path):
+    client, _ = launched()
+    record = SessionRecord(
+        api_key="test-key", access_token="SECRET-TOKEN", user_id="KW1234", issued_at=NOW - timedelta(hours=1)
+    )
+    (tmp_path / "kite_session.json").write_text(record.to_json())
+    html = client.get("/").text
+    assert "Monday" in html and "TRADING_WEEKDAY=2 (Wednesday)" in html and "weekday guard" in html
+    assert "live for" in html and "KW1234" in html and "SECRET-TOKEN" not in html
+    assert "2026-09-14/113000-paper" in html
+    assert 'value="plan"' in html and "Book: paper" in html and "Book: LIVE" not in html
+    assert 'name="_token" value="tok"' in html
+
+
+def test_today_page_without_a_session(launched):
+    client, _ = launched()
+    assert "none cached" in client.get("/").text
+
+
+def test_a_plan_is_started_from_the_page_and_the_run_it_made_appears(launched):
+    client, launcher = launched()
+    response = _start(client, mode="plan")
+    assert response.status_code == 303 and response.headers["location"] == "/"
+    assert launcher.current is not None and launcher.current.wait(20) == 0
+    html = client.get("/").text
+    assert "PLAN_ONLY=1 ALLOW_KITE_EXECUTION=0" in html and "exited 0" in html
+    assert "2026-09-14/120500-plan" in html
+    # the login URL is a link, never text
+    assert 'href="https://kite.zerodha.com/connect/login?api_key=KEY123&amp;v=3"' in html
+    assert html.count("api_key=KEY123") == 1
+    assert "open the Kite login" in html
+    assert 'hx-trigger="every 2s"' not in html  # nothing left to poll
+
+
+def test_a_post_without_the_token_or_from_another_host_starts_nothing(launched):
+    client, launcher = launched()
+    assert client.post("/runs/start", data={"mode": "plan"}).status_code == 403
+    assert client.post("/runs/start", data={"mode": "plan", "_token": "wrong"}).status_code == 403
+    assert (
+        client.post("/runs/start", data={"mode": "plan", "_token": "tok"}, headers={"host": "evil.example"}).status_code
+        == 400
+    )
+    assert _start(client, mode="kill").status_code == 400
+    assert launcher.current is None
+    # the header is the other way to present it
+    ok = client.post("/runs/start", data={"mode": "plan"}, headers={"X-Console-Token": "tok"}, follow_redirects=False)
+    assert ok.status_code == 303 and launcher.current is not None
+
+
+def test_a_live_booking_run_needs_the_word_typed(launched):
+    client, launcher = launched(allow=True)
+    page = client.get("/").text
+    assert "Book: LIVE" in page and "sends orders to Kite" in page
+    assert _start(client, mode="book").status_code == 403 and launcher.current is None
+    assert _start(client, mode="book", confirm="live").status_code == 403 and launcher.current is None
+    assert _start(client, mode="book", confirm="LIVE").status_code == 303
+    assert launcher.current is not None and launcher.current.wait(20) == 0
+    assert "PLAN_ONLY=0 ALLOW_KITE_EXECUTION=1" in launcher.current.lines
+
+
+def test_a_paper_booking_run_needs_no_word_and_a_kill_switch_gets_no_button(launched):
+    client, launcher = launched()
+    assert _start(client, mode="book").status_code == 303
+    assert launcher.current is not None and launcher.current.wait(20) == 0
+    assert "PLAN_ONLY=0 ALLOW_KITE_EXECUTION=0" in launcher.current.lines
+    killer, kill_launcher = launched(kill=True)
+    page = killer.get("/").text
+    assert "does not start one" in page and 'value="book"' not in page and 'value="plan"' in page
+    assert _start(killer, mode="book").status_code == 409 and kill_launcher.current is None
+
+
+def test_a_second_start_while_a_child_runs_is_refused_and_the_panel_polls(launched):
+    client, launcher = launched(command=[sys.executable, "-c", SLOW])
+    assert _start(client, mode="plan").status_code == 303
+    assert launcher.current is not None
+    try:
+        refused = _start(client, mode="plan")
+        assert refused.status_code == 409 and "already going" in refused.text
+        html = client.get("/").text
+        assert 'hx-trigger="every 2s"' in html and "status-running" in html
+        assert "<form" not in html.split('id="launch"')[1]
+        partial = client.get("/launch").text
+        assert "<html" not in partial and 'id="launch"' in partial
+    finally:
+        launcher.current.process.kill()
+        launcher.current.wait(10)
+
+
+def test_the_log_stream_sends_the_lines_then_done(client):
+    with client.stream("GET", f"/runs/{NEWEST}/log/stream") as response:
+        body = "".join(response.iter_text())
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "data: 2026-09-09 10:00:00 INFO pipeline:448 Portfolio value at start: 1175000.00\n\n" in body
+    assert body.rstrip().endswith("event: done\ndata: end")
+    with client.stream("GET", f"/runs/{NEWEST}/log/stream", params={"skip": 1}) as response:
+        body = "".join(response.iter_text())
+    assert "Portfolio value" not in body and "data: ... done" in body
+
+
+def test_the_rail_polls_while_a_run_is_running_and_rests_after(client):
+    partial = client.get("/runs/2026-09-14/113000-paper/rail", params={"tab": "log"}).text
+    assert "<html" not in partial and 'hx-trigger="every 3s"' in partial and 'class="active"' in partial
+    page = client.get("/runs/2026-09-14/113000-paper/log").text
+    assert 'hx-get="/runs/2026-09-14/113000-paper/rail?tab=log"' in page
+    assert "new EventSource('/runs/2026-09-14/113000-paper/log/stream?skip=1')" in page
+    done = client.get(f"/runs/{NEWEST}/log").text
+    assert "hx-trigger" not in done and "EventSource" not in done

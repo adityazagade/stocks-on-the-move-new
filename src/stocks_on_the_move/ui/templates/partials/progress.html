@@ -1,0 +1,11 @@
+<div id="progress" {% if run.display_status == 'running' %}hx-get="/runs/{{ run.id }}/rail?tab={{ tab }}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+<ol class="rail">
+{% for label, done in run.rail() %}<li class="{{ 'done' if done else 'todo' }}"><span class="n">{{ loop.index }}</span>{{ label }}</li>
+{% endfor %}</ol>
+<nav class="tabs">
+  <a href="/runs/{{ run.id }}" class="{{ 'active' if tab == 'summary' }}">summary</a>
+  {% for t in table_names %}<a href="/runs/{{ run.id }}/{{ t }}" class="{{ (('active' if tab == t) ~ ' ' ~ ('missing' if not run.has(t ~ '.csv'))) | trim }}">{{ t }}</a>
+  {% endfor %}<a href="/runs/{{ run.id }}/log" class="{{ (('active' if tab == 'log') ~ ' ' ~ ('missing' if not run.has('run.log'))) | trim }}">log</a>
+  <a href="/runs/{{ run.id }}/meta" class="{{ 'active' if tab == 'meta' }}">run.json</a>
+</nav>
+</div>

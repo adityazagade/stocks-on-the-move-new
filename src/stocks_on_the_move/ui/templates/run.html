@@ -8,15 +8,7 @@
 {% if run.display_status == 'abandoned' %}
 <p class="warn"><strong>Abandoned.</strong> run.json still says <code>running</code> and the log has been silent for more than ten minutes, so the process is gone. What it wrote up to that point is below; the file is left as it is.</p>
 {% endif %}
-<ol class="rail">
-{% for label, done in run.rail() %}<li class="{{ 'done' if done else 'todo' }}"><span class="n">{{ loop.index }}</span>{{ label }}</li>
-{% endfor %}</ol>
-<nav class="tabs">
-  <a href="/runs/{{ run.id }}" class="{{ 'active' if tab == 'summary' }}">summary</a>
-  {% for t in table_names %}<a href="/runs/{{ run.id }}/{{ t }}" class="{{ 'active' if tab == t }} {{ 'missing' if not run.has(t ~ '.csv') }}">{{ t }}</a>
-  {% endfor %}<a href="/runs/{{ run.id }}/log" class="{{ 'active' if tab == 'log' }} {{ 'missing' if not run.has('run.log') }}">log</a>
-  <a href="/runs/{{ run.id }}/meta" class="{{ 'active' if tab == 'meta' }}">run.json</a>
-</nav>
+{% include "partials/progress.html" %}
 {% if tab == 'summary' %}
 {% set m = run.meta %}
 <dl class="facts">
@@ -29,8 +21,21 @@
   <dt>Resize</dt><dd>{% if m.resize_performed is not none %}{{ 'performed' if m.resize_performed else 'not due' }} · last resize {{ m.last_resize_date_before or 'never' }} → {{ m.last_resize_date_after or 'never' }}{% endif %}</dd>
 </dl>
 {% elif tab == 'log' %}
-<pre class="log">{% for line in log %}{{ line }}
+<pre class="log" id="log">{% for line in log %}{{ line }}
 {% endfor %}</pre>
+{% if run.display_status == 'running' %}
+<script>
+(function () {
+  var pre = document.getElementById('log');
+  var source = new EventSource('/runs/{{ run.id }}/log/stream?skip={{ log | length }}');
+  source.onmessage = function (event) {
+    pre.appendChild(document.createTextNode(event.data + '\n'));
+    pre.scrollTop = pre.scrollHeight;
+  };
+  source.addEventListener('done', function () { source.close(); window.location.reload(); });
+})();
+</script>
+{% endif %}
 {% elif tab == 'meta' %}
 <pre class="json">{{ meta_json }}</pre>
 {% else %}
