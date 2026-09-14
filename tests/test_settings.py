@@ -96,7 +96,7 @@ def test_runs_dir_in_the_environment_moves_the_state_files_and_a_file_variable_b
 
 
 def test_starting_cash_defaults_to_account_value_but_explicit_zero_stays_zero():
-    assert build().starting_cash == 100_000
+    assert build().starting_cash == 0  # ACCOUNT_VALUE defaults to 0 since 819f95a: an account declares its own cash
     assert build(account_value=50_000).starting_cash == 50_000
     assert build(account_value=50_000, starting_cash=0).starting_cash == 0
 

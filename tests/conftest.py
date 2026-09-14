@@ -46,6 +46,7 @@ def make_settings(tmp_path) -> Callable[..., Settings]:
         values = {
             "kite_api_key": "test-key",
             "kite_api_secret": "test-secret",
+            "account_value": 100_000,  # the cash the tests were written against; the production default is 0 (819f95a)
             "allow_kite_execution": False,
             "cache_dir": tmp_path / "candles",
             "kite_session_file": tmp_path / "kite_session.json",
