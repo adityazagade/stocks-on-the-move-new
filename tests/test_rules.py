@@ -12,7 +12,17 @@ import pytest
 from fakes import EVEN_WEEK_WEDNESDAY, make_candles, trending_closes
 from stocks_on_the_move.indicators import Snapshot, SnapshotError, annualise, composite_momentum
 from stocks_on_the_move.params import StrategyParams
-from stocks_on_the_move.rules import ExitCheck, RankItem, evaluate, exit_check, rank, regime, size, trailing_stop
+from stocks_on_the_move.rules import (
+    ExitCheck,
+    RankItem,
+    evaluate,
+    exit_check,
+    rank,
+    regime,
+    size,
+    trailing_stop,
+    unrankable,
+)
 from stocks_on_the_move.settings import Settings
 
 TODAY = EVEN_WEEK_WEDNESDAY.date()
@@ -125,22 +135,28 @@ def test_regime_is_bull_above_the_long_ema_and_bear_below():
 # ── the filter chain ─────────────────────────────────────────────────────
 
 
-def test_evaluate_names_the_rule_that_excluded():
-    short = evaluate(snapshot("SHORT", trending_closes(10)), P)
-    assert (short.reason, short.last) == ("history", None)
+def test_evaluate_names_the_entry_rule_that_disqualified():
+    """Each filter names itself, in order, and the name is still scored and ranked (ADR-033)."""
     falling = evaluate(snapshot("FALLING", trending_closes(150, daily=-0.003)), P)
-    assert falling.reason == "below_ma100" and falling.avg_vol_20 is None
+    assert falling.reason == "below_ma100"
     assert falling.last is not None and falling.ma100 is not None and falling.last < falling.ma100
     thin = evaluate(snapshot("THIN", trending_closes(150), volume=100), P)
-    assert thin.reason == "volume" and thin.avg_vol_20 == 100 and thin.atr is None
+    assert thin.reason == "volume" and thin.avg_vol_20 == 100
     wild = evaluate(snapshot("WILD", trending_closes(150), spread=0.25), P)
     assert wild.reason == "atr_pct" and wild.atr_pct is not None and wild.atr_pct > P.max_atr_pct
     steady = trending_closes(150, daily=0.002)
     gapped = evaluate(snapshot("GAPPED", steady[:-30] + [c * 1.2 for c in steady[-30:]]), P)
     assert gapped.reason == "gap" and gapped.max_gap is not None and gapped.max_gap >= P.max_gap_pct
-    assert gapped.atr is not None  # the gap rule comes after the ATR rule, so the ATR was measured
+
+    # every one of them is scored, ranked and flagged, not dropped
+    for verdict in (falling, thin, wild, gapped):
+        assert verdict.rank is not None, verdict.symbol
+        assert verdict.rank.qualified is False and verdict.rank.reason == verdict.reason
+        assert verdict.status == "disqualified" and verdict.row()["status"] == "disqualified"
+
     good = evaluate(snapshot("GOOD", steady), P)
     assert good.reason is None and good.rank is not None and good.rank.symbol == "GOOD"
+    assert good.rank.qualified is True and good.rank.reason is None
     assert good.row()["status"] == "ranked" and good.atr_pct is not None and good.atr_pct < P.max_atr_pct
     assert good.max_gap is not None and good.max_gap < P.max_gap_pct
     off = evaluate(
@@ -149,17 +165,56 @@ def test_evaluate_names_the_rule_that_excluded():
     assert off.reason is None  # 1 disables the rule
 
 
-def test_evaluate_turns_a_failed_snapshot_into_an_error_reason():
-    verdict = evaluate(Snapshot.failed("X", 1, RuntimeError("boom")), P)
-    assert verdict.reason == "error:RuntimeError" and verdict.rank is None
-    assert verdict.row()["status"] == "excluded"
+def test_a_disqualified_name_still_reports_every_metric():
+    """The chain no longer stops at the first failure, so universe.csv is filled in whatever failed (ADR-033)."""
+    falling = evaluate(snapshot("FALLING", trending_closes(150, daily=-0.003)), P)
+    assert falling.avg_vol_20 is not None and falling.atr is not None
+    assert falling.atr_pct is not None and falling.max_gap is not None
 
 
-def test_rank_orders_by_score_and_drops_the_excluded():
+def test_a_name_with_no_score_is_excluded_and_never_ranked():
+    """No score means no place in the ranking: it is listed, not measured (ADR-033)."""
+    short = evaluate(snapshot("SHORT", trending_closes(10)), P)
+    assert (short.reason, short.last, short.rank) == ("history", None, None)
+    assert short.status == "excluded"
+
+    failed = evaluate(Snapshot.failed("X", 1, RuntimeError("boom")), P)
+    assert failed.reason == "error:RuntimeError" and failed.rank is None
+    assert failed.row()["status"] == "excluded"
+
+    assert unrankable([short, failed]) == [("SHORT", "history"), ("X", "error:RuntimeError")]
+
+
+def test_rank_orders_by_score_and_scopes_the_list():
     good = evaluate(snapshot("GOOD", trending_closes(150, daily=0.002)), P)
     better = evaluate(snapshot("BETTER", trending_closes(150, daily=0.004)), P)
-    out = evaluate(snapshot("OUT", trending_closes(10)), P)
-    assert [r.symbol for r in rank([good, out, better])] == ["BETTER", "GOOD"]
+    out = evaluate(snapshot("OUT", trending_closes(10)), P)  # no score at all
+    falling = evaluate(snapshot("FALLING", trending_closes(150, daily=-0.003)), P)  # scored, disqualified
+    evaluations = [good, out, better, falling]
+
+    # the default keeps the strategy's long-standing list: only what may be bought
+    assert [r.symbol for r in rank(evaluations, P)] == ["BETTER", "GOOD"]
+
+    # the universe scope ranks the disqualified name too, on its own momentum, flagged
+    whole = rank(evaluations, dataclasses.replace(P, rank_scope="universe"))
+    assert [r.symbol for r in whole] == ["BETTER", "GOOD", "FALLING"]
+    assert [r.qualified for r in whole] == [True, True, False]
+    assert whole[-1].reason == "below_ma100"
+    # OUT is in neither list under either scope: there is no score to place it by
+    assert "OUT" not in {r.symbol for r in whole}
+
+
+def test_a_disqualified_name_is_ranked_by_momentum_not_pushed_to_the_end():
+    """The point of ADR-033: position is measured, never assigned."""
+    strong_but_gapped = trending_closes(150, daily=0.002)
+    strong_but_gapped = strong_but_gapped[:-30] + [c * 1.2 for c in strong_but_gapped[-30:]]
+    gapped = evaluate(snapshot("GAPPED", strong_but_gapped), P)
+    weak = evaluate(snapshot("WEAK", trending_closes(150, daily=0.0002)), P)
+    assert gapped.rank is not None and gapped.rank.qualified is False
+
+    whole = rank([weak, gapped], dataclasses.replace(P, rank_scope="universe"))
+    # the gapped name outscores the weak one, so it ranks above it despite being unbuyable
+    assert [r.symbol for r in whole] == ["GAPPED", "WEAK"]
 
 
 # ── exits ────────────────────────────────────────────────────────────────
@@ -191,8 +246,30 @@ def test_exit_check_lists_every_rule_that_fired():
     assert hold.reasons == () and hold.sell is False and hold.stop_level is not None
     both = exit_check(up, rank_item("UP", close=90.0, ma100=90.0), 0.9, P)
     assert both.reasons == ("rank_cutoff", "below_ma100")
+    # the collapse halves the close in a day, so the gap rule fires beside the stop
     stopped = exit_check(down, rank_item("DOWN", close=200.0, ma100=150.0), 0.1, P)
-    assert stopped.reasons == ("trailing_stop",) and stopped.sell is True
+    assert stopped.reasons == ("gap", "trailing_stop") and stopped.sell is True
+
+
+def test_the_gap_rule_exits_a_ranked_holding():
+    """A gapped name now takes its place in the ranking, so the exit is stated rather than inherited (ADR-033)."""
+    steady = trending_closes(150, daily=0.002)
+    gapped = snapshot("GAPPED", steady[:-30] + [c * 1.2 for c in steady[-30:]])
+    item = rank_item("GAPPED", close=gapped.last, ma100=gapped.ma100)
+    assert exit_check(gapped, item, 0.1, P).reasons == ("gap",)
+    # and the knob still turns it off
+    off = dataclasses.replace(P, max_gap_pct=1.0)
+    assert exit_check(gapped, item, 0.1, off).reasons == ()
+
+
+def test_volume_and_atr_do_not_exit_a_ranked_holding():
+    """Both were chosen to keep a name out of a new position, neither to close a working one (ADR-033)."""
+    thin = snapshot("THIN", trending_closes(150, daily=0.002), volume=100)
+    wild = snapshot("WILD", trending_closes(150, daily=0.002), spread=0.25)
+    assert evaluate(thin, P).reason == "volume" and evaluate(wild, P).reason == "atr_pct"
+    for snap in (thin, wild):
+        item = rank_item(snap.symbol, close=snap.last, ma100=snap.ma100)
+        assert exit_check(snap, item, 0.1, P).reasons == ()
 
 
 # ── sizing ───────────────────────────────────────────────────────────────

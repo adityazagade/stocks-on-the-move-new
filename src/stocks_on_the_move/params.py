@@ -39,6 +39,10 @@ class StrategyParams:
     # book's annualised regression slope times R². The switch exists so the backtest can compare them
     # (ADR-028); the live run uses the blend until that ADR is Accepted.
     score: Literal["blend", "slope"] = "slope"
+    # Which names the ranking list holds: only those that pass every entry filter, or every name that has a
+    # score, each carrying whether it may be bought (ADR-033). The switch exists so the backtest can compare
+    # them; the live run ranks the qualified until that ADR's gate passes.
+    rank_scope: Literal["qualified", "universe"] = "qualified"
     gap_lookback: int = 90  # trading days the gap filter looks back over (ADR-025)
     trend_ma_period: int = 100  # a stock must close above this simple moving average to be ranked (ADR-024)
     regime_ma_period: int = 200  # the index must close above this simple moving average for buys

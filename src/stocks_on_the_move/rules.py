@@ -22,7 +22,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RankItem:
-    """One ranked instrument: its score, the regression it came from, and the closes the exit rules read."""
+    """One ranked instrument: its score, the regression it came from, and the closes the exit rules read.
+
+    ``qualified`` is whether the entry filters let it be bought, and ``reason``
+    the first one it failed if they did not (ADR-033). A disqualified name still
+    takes the place its momentum earns it; only the buy step reads the flag.
+    """
 
     symbol: str
     score: float
@@ -30,6 +35,8 @@ class RankItem:
     r2: float
     close: float
     ma100: float
+    qualified: bool = True
+    reason: str | None = None
 
 
 # ── 1 ▸ index regime ─────────────────────────────────────────────────────
@@ -65,11 +72,19 @@ class Evaluation:
     atr_pct: float | None = None
     max_gap: float | None = None
 
+    @property
+    def status(self) -> str:
+        """``ranked`` when it may be bought, ``disqualified`` when it has a score but failed an entry filter,
+        ``excluded`` when there is no score to place it by at all (ADR-033)."""
+        if self.rank is None:
+            return "excluded"
+        return "ranked" if self.rank.qualified else "disqualified"
+
     def row(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,
             "token": self.token,
-            "status": "ranked" if self.rank is not None else "excluded",
+            "status": self.status,
             "reason": self.reason,
             "last": self.last,
             "ma100": self.ma100,
@@ -80,13 +95,35 @@ class Evaluation:
         }
 
 
-def evaluate(snap: Snapshot, params: StrategyParams) -> Evaluation:
-    """Run the filter chain on one snapshot and name the rule that stopped it, if any.
+def disqualification(snap: Snapshot, params: StrategyParams) -> str | None:
+    """The first entry filter a scoreable name fails, or ``None`` when it may be bought.
 
-    Order of the rules: enough history, close above the trend average, 20-day
-    volume, ATR as a fraction of price, the gap filter (ADR-025), then the
-    momentum score. A
-    snapshot that could not be built is an ``error:<type>`` exclusion.
+    In order: close above the trend average (ADR-024), 20-day volume, ATR as a
+    fraction of price, the gap filter (ADR-025). These say whether a name is
+    worth opening a position in; only the trend average and the gap rule also
+    say anything about closing one (ADR-033).
+    """
+    if snap.last <= snap.ma100:
+        return "below_ma100"
+    if snap.avg_vol_20 < params.min_volume:
+        return "volume"
+    if math.isnan(snap.atr) or (snap.last > 0 and snap.atr / snap.last > params.max_atr_pct):
+        return "atr_pct"
+    if not math.isnan(snap.max_gap) and snap.max_gap >= params.max_gap_pct:
+        return "gap"
+    return None
+
+
+def evaluate(snap: Snapshot, params: StrategyParams) -> Evaluation:
+    """Score one snapshot, and say whether the entry filters let it be bought (ADR-033).
+
+    A name is *rankable* when there is a momentum score to place it by. When
+    there is not — the snapshot failed to build (``error:<type>``), the history
+    is short (``history``), or the score came back ``nan``
+    (``insufficient_data``) — it is excluded, carries no ``RankItem``, and a
+    holding in that state exits as ``unranked:<cause>``. A rankable name always
+    gets its ``RankItem``, with ``qualified`` and the first entry filter it
+    failed, if any, recorded on it rather than used to drop it.
     """
     sym, tok = snap.symbol, snap.token
     last: float | None = None
@@ -103,30 +140,53 @@ def evaluate(snap: Snapshot, params: StrategyParams) -> Evaluation:
         return verdict(reason=f"error:{snap.error_type}")
     if not snap.enough_history:
         return verdict(reason="history")
-    ma100 = snap.ma100
+
+    # Every metric, whatever fails: a disqualified name still reports its numbers in universe.csv
     last = snap.last
-    if last <= ma100:
-        return verdict(reason="below_ma100")
+    ma100 = snap.ma100
     avg_vol_20 = snap.avg_vol_20
-    if avg_vol_20 < params.min_volume:
-        return verdict(reason="volume")
     atr_value = snap.atr
     atr_pct = atr_value / last if last > 0 else math.nan
-    if math.isnan(atr_value) or (last > 0 and atr_value / last > params.max_atr_pct):
-        return verdict(reason="atr_pct")
     max_gap = snap.max_gap
-    if not math.isnan(max_gap) and max_gap >= params.max_gap_pct:
-        return verdict(reason="gap")
+
     if math.isnan(snap.score):
         logger.warning("Not enough data to rank for %s", sym)
         return verdict(reason="insufficient_data")
-    return verdict(rank=RankItem(sym, float(snap.score), float(snap.annual_slope), float(snap.r2), last, ma100))
+    reason = disqualification(snap, params)
+    item = RankItem(
+        sym,
+        float(snap.score),
+        float(snap.annual_slope),
+        float(snap.r2),
+        last,
+        ma100,
+        qualified=reason is None,
+        reason=reason,
+    )
+    return verdict(rank=item, reason=reason)
 
 
-def rank(evaluations: Iterable[Evaluation]) -> list[RankItem]:
-    """The ranked names, best score first."""
+def rank(evaluations: Iterable[Evaluation], params: StrategyParams) -> list[RankItem]:
+    """The ranking list, best score first (ADR-033).
+
+    Under ``rank_scope="universe"`` it is every name that has a score, each
+    carrying whether it may be bought; under ``"qualified"``, the default, only
+    the names that pass every entry filter, as the strategy has always ranked.
+    """
     ranks = [e.rank for e in evaluations if e.rank is not None]
+    if params.rank_scope == "qualified":
+        ranks = [r for r in ranks if r.qualified]
     return sorted(ranks, key=lambda r: r.score, reverse=True)
+
+
+def unrankable(evaluations: Iterable[Evaluation]) -> list[tuple[str, str]]:
+    """``(symbol, reason)`` for the names with no score to place them by, for the tail of ranking.csv.
+
+    They are listed, never scored: a fabricated score is a position in the
+    ranking that was assigned rather than measured, and where it would land
+    moves with the market (ADR-033, Option 4).
+    """
+    return [(e.symbol, e.reason or "unknown") for e in evaluations if e.rank is None]
 
 
 # ── 3 ▸ ATR position size ────────────────────────────────────────────────
@@ -192,11 +252,17 @@ def exit_check(
     *,
     unranked_cause: str | None = None,
 ) -> ExitCheck:
-    """Every exit rule, evaluated: ``unranked``, ``rank_cutoff``, ``below_ma100``, ``trailing_stop``.
+    """Every exit rule, evaluated: ``unranked``, ``rank_cutoff``, ``below_ma100``, ``gap``, ``trailing_stop``.
 
     All rules are checked so the artifact shows every reason; the decision is the
     OR of them. An unranked holding needs no snapshot; when the caller knows why
     it was excluded, the reason reads ``unranked:<cause>`` (ADR-025).
+
+    The gap rule is stated here rather than inherited from the ranking, so that
+    a gapped name that now takes its place in the ranking still exits on it
+    (ADR-025's Option 4 stays rejected; ADR-033). The volume floor and the ATR
+    ceiling are not here: both were chosen to keep a name out of a new position,
+    neither as a reason to close a working one.
     """
     if rank is None:
         return ExitCheck((f"unranked:{unranked_cause}" if unranked_cause else "unranked",))
@@ -205,6 +271,8 @@ def exit_check(
         reasons.append("rank_cutoff")
     if rank.close <= rank.ma100:
         reasons.append("below_ma100")
+    if snap is not None and snap.error is None and not math.isnan(snap.max_gap) and snap.max_gap >= params.max_gap_pct:
+        reasons.append("gap")
     hit, stop_level = trailing_stop(snap, params)
     if hit:
         reasons.append("trailing_stop")
