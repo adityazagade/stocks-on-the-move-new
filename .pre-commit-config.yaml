@@ -26,8 +26,12 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # The vendored front-end files (ADR-031) stay byte-identical to their upstream builds so the
+      # digests in static/vendor/VERSIONS verify against them.
       - id: trailing-whitespace
+        exclude: ^src/stocks_on_the_move/ui/static/vendor/
       - id: end-of-file-fixer
+        exclude: ^src/stocks_on_the_move/ui/static/vendor/
       - id: check-toml
       - id: check-yaml
       - id: check-added-large-files

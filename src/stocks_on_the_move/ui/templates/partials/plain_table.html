@@ -1,0 +1,11 @@
+<div class="table-wrap">
+<table class="data">
+<thead><tr>{% for c in table.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for row in table.rows %}
+<tr>{% for c in table.columns %}{% set v = row.get(c, '') %}<td class="{{ 'num' if is_number(v) }}">{{ v }}</td>{% endfor %}</tr>
+{% endfor %}
+{% if not table.rows %}<tr><td colspan="{{ table.columns | length or 1 }}" class="empty">{{ empty_text }}</td></tr>{% endif %}
+</tbody>
+</table>
+</div>

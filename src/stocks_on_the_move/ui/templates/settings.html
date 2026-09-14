@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings <small>what a run would see · credentials removed · read-only</small></h1>
+<p class="meta">Edit <code>.env</code> by hand and restart the console. <code>uv run --env-file .env python -m stocks_on_the_move.settings --check</code> prints the same view.</p>
+<div class="table-wrap">
+<table class="data settings">
+<thead><tr><th>setting</th><th>value</th><th>default</th><th>description</th></tr></thead>
+<tbody>
+{% for r in rows %}<tr class="{{ 'changed' if r.changed }}"><th>{{ r.name }}</th><td>{{ r.value }}{% if r.changed %} <span class="badge changed">changed</span>{% endif %}</td><td class="default">{{ r.default }}</td><td class="desc">{{ r.description }}</td></tr>
+{% endfor %}</tbody>
+</table>
+</div>
+{% endblock %}

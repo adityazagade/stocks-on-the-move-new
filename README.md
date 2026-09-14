@@ -55,6 +55,24 @@ Useful switches (the full list, with defaults, is in `.env.example`):
 | `KITE_FORGET_SESSION=1` | Discard the cached Kite session and log in afresh |
 | `LOG_LEVEL=DEBUG` | Verbose console; the run's `run.log` under `runs/` is always at DEBUG |
 
+## The console
+
+`stocks-on-the-move-ui` (ADR-031) serves a view of `runs/` on
+`http://127.0.0.1:8766/`: every run with its twelve-step rail and its
+tables, the account as the newest booking run left it with the two ledgers
+and an equity curve, the backtests side by side, and the settings a run
+would see with the credentials removed. It starts the way a run does, so it
+sees the same `.env`:
+
+```sh
+uv run --env-file .env stocks-on-the-move-ui    # --port moves it off 8766
+```
+
+It binds to the loopback interface only, computes no number of its own and
+imports nothing from the strategy: a figure on a page is the figure in the
+file. The band across the top says whether a booking run from this
+environment would be paper or live, and where `RUNS_DIR` points.
+
 ## Files
 
 | Path | Purpose |
@@ -120,6 +138,7 @@ src/stocks_on_the_move/
   artifacts.py    the per-run directory under runs/: tables, run.json, run.log (ADR-006)
   settings.py     every environment knob, validated once at startup (ADR-007)
   kite_auth.py    Kite login: session cache, redirect listener, paste (ADR-005)
+  ui/             the operator console over runs/: FastAPI and Jinja2, htmx and uPlot vendored (ADR-031)
   __main__.py     python -m entry point
 tests/            pytest suite
 docs/adr/         architecture decision records

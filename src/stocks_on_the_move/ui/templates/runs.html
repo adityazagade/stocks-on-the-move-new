@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Runs{% endblock %}
+{% block content %}
+<h1>Runs <small>{{ runs | length }} shown</small></h1>
+<p class="filters">
+  mode:
+  <a href="/runs?status={{ status }}" class="{{ 'active' if not mode }}">all</a>
+  {% for m in modes %}<a href="/runs?mode={{ m }}&status={{ status }}" class="{{ 'active' if mode == m }}">{{ m }}</a>{% endfor %}
+  · status:
+  <a href="/runs?mode={{ mode }}" class="{{ 'active' if not status }}">all</a>
+  {% for s in statuses %}<a href="/runs?mode={{ mode }}&status={{ s }}" class="{{ 'active' if status == s }}">{{ s }}</a>{% endfor %}
+</p>
+<div class="table-wrap">
+<table class="runs">
+<thead><tr><th>day</th><th>run</th><th>mode</th><th>status</th><th>started</th><th>finished</th><th class="num">equity after</th><th class="num">positions</th><th>steps</th></tr></thead>
+<tbody>
+{% for r in runs %}
+<tr>
+  <td>{{ r.day }}</td>
+  <td><a href="/runs/{{ r.id }}">{{ r.name }}</a></td>
+  <td><span class="badge mode-{{ r.mode }}">{{ r.mode }}</span></td>
+  <td><span class="badge status-{{ r.display_status }}">{{ r.display_status }}</span></td>
+  <td>{{ r.started }}</td>
+  <td>{{ r.finished }}</td>
+  <td class="num">{{ r.meta.equity_after | money }}</td>
+  <td class="num">{% if r.meta.positions_after is mapping %}{{ r.meta.positions_after | length }}{% endif %}</td>
+  <td class="minirail">{% for label, done in r.rail() %}<i class="{{ 'done' if done else 'todo' }}" title="{{ loop.index }} {{ label }}"></i>{% endfor %}</td>
+</tr>
+{% endfor %}
+{% if not runs %}<tr><td colspan="9" class="empty">no runs under {{ band.runs_dir }}</td></tr>{% endif %}
+</tbody>
+</table>
+</div>
+{% endblock %}

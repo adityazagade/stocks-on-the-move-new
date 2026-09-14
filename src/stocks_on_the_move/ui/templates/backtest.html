@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Backtest {{ bt.label }}{% endblock %}
+{% block content %}
+<h1><a href="/research">Research</a> / {{ bt.label }} <small>{{ bt.name }}</small></h1>
+{% if bt.note %}<p class="warn note"><strong>Read first:</strong> {{ bt.note }}</p>{% endif %}
+<dl class="facts">
+{% for field, cells in comparison %}<dt>{{ field }}</dt><dd>{{ cells[0] }}</dd>
+{% endfor %}</dl>
+<h2>Weekly</h2>
+{% with table=weekly, empty_text='no weeks' %}{% include "partials/plain_table.html" %}{% endwith %}
+<h2>Trades <small>{{ table.rows | length }}</small></h2>
+{% include "partials/table.html" %}
+<h2>params.json</h2>
+<pre class="json">{{ params_json }}</pre>
+{% endblock %}

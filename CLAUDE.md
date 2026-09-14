@@ -52,6 +52,7 @@ uv run ruff check --fix . && uv run ruff format .
 uv run ty check                           # type checking, blocking (ADR-010)
 uv run pre-commit run --all-files         # everything CI runs (ADR-011), secret scan included
 uv run --env-file .env python -m stocks_on_the_move.settings --check   # the configuration a run sees
+uv run --env-file .env stocks-on-the-move-ui                            # the console over runs/, 127.0.0.1:8766 (ADR-031)
 ```
 
 The paper-run recipe with scratch ledgers is in `ONBOARDING.md` section 2.

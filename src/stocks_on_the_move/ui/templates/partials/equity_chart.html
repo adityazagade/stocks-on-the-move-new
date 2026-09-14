@@ -1,0 +1,17 @@
+<div id="equity-chart" class="chart"></div>
+<script type="application/json" id="equity-data">{{ chart_json | safe }}</script>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  var data = JSON.parse(document.getElementById('equity-data').textContent);
+  var el = document.getElementById('equity-chart');
+  if (!data.x.length) { el.textContent = 'nothing to plot yet'; return; }
+  var colors = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#0891b2', '#ca8a04'];
+  var series = [{}].concat(data.labels.map(function (label, i) {
+    return { label: label, stroke: colors[i % colors.length], width: 2, spanGaps: true };
+  }));
+  new uPlot({
+    width: el.clientWidth || 900, height: 300, series: series,
+    scales: { x: { time: true } }, axes: [{}, { size: 90 }]
+  }, [data.x].concat(data.series), el);
+});
+</script>

@@ -22,7 +22,8 @@ A weekly momentum-rotation strategy for NSE equities, after Andreas Clenow's
 
 Orders go through Zerodha Kite Connect. State lives in five files at the
 root of `runs/` (`RUNS_DIR`): four CSVs and one JSON, outside version
-control (ADR-029). There is no database, no scheduler and no UI. The code is
+control (ADR-029). There is no database and no scheduler; the console under
+`ui/` (ADR-031) is a reader over `runs/`, not a part of the run. The code is
 one module per job under `src/stocks_on_the_move/` (ADR-020):
 
 | Module | Job |
@@ -40,6 +41,7 @@ one module per job under `src/stocks_on_the_move/` (ADR-020):
 | `backtest.py` | the replay of the pipeline over years of cached candles, with the live rules (ADR-023) |
 | `broker.py`, `candles.py` | the broker boundary and the candle cache (ADR-008) |
 | `artifacts.py`, `settings.py`, `kite_auth.py`, `logging_setup.py` | the run directory (ADR-006), every knob (ADR-007), the Kite login (ADR-005), logging (ADR-015) |
+| `ui/` | the operator console: pages over `runs/`, the account files, the backtests and the settings, served on loopback; imports none of the above but the column lists and the readers (ADR-031) |
 
 Where this port deviates from the book, and it matters when you read the code:
 
@@ -75,6 +77,20 @@ PLAN_ONLY=1 uv run --env-file .env stocks-on-the-move
 A plan assumes every intent fills in full at the price it would be sent at,
 so it is an upper bound on what the real run does when a limit order on a
 `BE` name does not fill.
+
+The plan, and every run before it, is also a page. The console (ADR-031)
+reads the run directories, the five state files and the backtests, and
+shows the settings with the credentials removed; it computes nothing, so a
+number on a page is the number in the file:
+
+```sh
+uv run --env-file .env stocks-on-the-move-ui    # http://127.0.0.1:8766/
+```
+
+The band across the top says which mode a booking run from this `.env`
+would be and where `RUNS_DIR` points, which is the paper-mode trap below
+made visible. A run whose `run.json` still says `running` while its log has
+been silent for ten minutes is shown as abandoned; the file is left alone.
 
 When you want a paper run that books, two things to know before you press
 enter:
@@ -416,7 +432,9 @@ the run directory; `tests/test_backtest.py` the replay over the golden
 fixtures (ADR-023); `tests/test_golden.py` is the golden-file regression test
 (below); `tests/test_pipeline.py`
 everything above the helpers, including whole `run(ctx)` calls in bull, bear
-and kill-switch markets. To test a strategy function, take the `ctx` fixture
+and kill-switch markets; `tests/test_ui.py` the console (ADR-031): its import
+boundary, the vendored files' digests, and every page against a fixture
+tree assembled from the golden tables. To test a strategy function, take the `ctx` fixture
 (a `RunContext` over `fakes.FakeBroker` with the clock frozen on a Wednesday
 and no rebalance on record, so one is due), add instruments with `broker.add_equity(...)` and
 prices with `broker.ltps[...]`, then assert on `broker.orders` and

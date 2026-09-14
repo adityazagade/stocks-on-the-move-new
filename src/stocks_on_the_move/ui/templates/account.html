@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block content %}
+<h1>Account</h1>
+{% if newest %}
+<p class="meta">as of the newest completed booking run <a href="/runs/{{ newest.id }}">{{ newest.id }}</a> ({{ newest.mode }}), finished {{ newest.finished }}</p>
+<dl class="facts">
+  <dt>Cash</dt><dd>{{ newest.meta.cash_after | money }}</dd>
+  <dt>Equity</dt><dd>{{ newest.meta.equity_after | money }}</dd>
+  <dt>Positions</dt><dd>{{ positions | length }}</dd>
+  <dt>Last resize</dt><dd>{{ last_resize or 'never' }} <small>{{ files.state }}</small></dd>
+</dl>
+<h2>Positions after that run</h2>
+<table class="data narrow"><thead><tr><th>symbol</th><th class="num">quantity</th></tr></thead><tbody>
+{% for sym, qty in positions %}<tr><td>{{ sym }}</td><td class="num">{{ qty }}</td></tr>
+{% endfor %}{% if not positions %}<tr><td colspan="2" class="empty">no positions</td></tr>{% endif %}
+</tbody></table>
+{% else %}
+<p class="warn">No completed booking run under <code>{{ band.runs_dir }}</code> yet. This page fills in after the first paper or live run.</p>
+{% endif %}
+
+<h2>Equity after each booking run <small>plans excluded</small></h2>
+{% if series %}
+{% include "partials/equity_chart.html" %}
+<ul class="series">
+{% for mode, pts in series.items() %}<li><span class="badge mode-{{ mode }}">{{ mode }}</span> {{ pts | length }} runs:
+  {% for p in pts %}<a href="/runs/{{ p.run.id }}">{{ p.date }} {{ p.equity | money }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</li>
+{% endfor %}</ul>
+{% else %}<p class="empty">no completed booking run yet</p>{% endif %}
+
+<h2>Portfolio files</h2>
+<div class="columns">
+  <div><h3>current <small>{{ files.current }}</small></h3>
+  <table class="data narrow"><thead><tr><th>symbol</th><th class="num">quantity</th></tr></thead><tbody>
+  {% for row in current_pf.rows %}<tr><td>{{ row.symbol }}</td><td class="num">{{ row.quantity }}</td></tr>
+  {% endfor %}{% if not current_pf.rows %}<tr><td colspan="2" class="empty">empty</td></tr>{% endif %}
+  </tbody></table></div>
+  <div><h3>next <small>{{ files.next }}</small></h3>
+  <table class="data narrow"><thead><tr><th>symbol</th><th class="num">quantity</th></tr></thead><tbody>
+  {% for row in next_pf.rows %}<tr><td>{{ row.symbol }}</td><td class="num">{{ row.quantity }}</td></tr>
+  {% endfor %}{% if not next_pf.rows %}<tr><td colspan="2" class="empty">empty</td></tr>{% endif %}
+  </tbody></table></div>
+</div>
+
+<h2>Cash ledger <small>{{ files.cash }}</small></h2>
+{% with table=cash_ledger, empty_text='no cash flows' %}{% include "partials/plain_table.html" %}{% endwith %}
+
+<h2>Trades ledger <small>{{ files.trades }} · read-only: cash is reconstructed from it on every run</small></h2>
+{% with table=trades_ledger, empty_text='no trades' %}{% include "partials/plain_table.html" %}{% endwith %}
+{% endblock %}

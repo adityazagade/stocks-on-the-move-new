@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run.id }}{% endblock %}
+{% block content %}
+<h1><a href="/runs">Runs</a> / {{ run.day }} / {{ run.name }}
+  <span class="badge mode-{{ run.mode }}">{{ run.mode }}</span>
+  <span class="badge status-{{ run.display_status }}">{{ run.display_status }}</span></h1>
+<p class="meta">started {{ run.started or '?' }}{% if run.finished %} · finished {{ run.finished }}{% endif %} · status <code>{{ run.status }}</code>{% if run.meta.commit %} · commit <code>{{ run.meta.commit }}</code>{% endif %}{% if run.meta.version %} · version {{ run.meta.version }}{% endif %}</p>
+{% if run.display_status == 'abandoned' %}
+<p class="warn"><strong>Abandoned.</strong> run.json still says <code>running</code> and the log has been silent for more than ten minutes, so the process is gone. What it wrote up to that point is below; the file is left as it is.</p>
+{% endif %}
+<ol class="rail">
+{% for label, done in run.rail() %}<li class="{{ 'done' if done else 'todo' }}"><span class="n">{{ loop.index }}</span>{{ label }}</li>
+{% endfor %}</ol>
+<nav class="tabs">
+  <a href="/runs/{{ run.id }}" class="{{ 'active' if tab == 'summary' }}">summary</a>
+  {% for t in table_names %}<a href="/runs/{{ run.id }}/{{ t }}" class="{{ 'active' if tab == t }} {{ 'missing' if not run.has(t ~ '.csv') }}">{{ t }}</a>
+  {% endfor %}<a href="/runs/{{ run.id }}/log" class="{{ 'active' if tab == 'log' }} {{ 'missing' if not run.has('run.log') }}">log</a>
+  <a href="/runs/{{ run.id }}/meta" class="{{ 'active' if tab == 'meta' }}">run.json</a>
+</nav>
+{% if tab == 'summary' %}
+{% set m = run.meta %}
+<dl class="facts">
+  <dt>Cash</dt><dd>{{ m.cash_before | money }} → {{ m.cash_after | money }}</dd>
+  <dt>Equity</dt><dd>{{ m.equity_before | money }} → {{ m.equity_after | money }}</dd>
+  <dt>Positions</dt><dd>{% if m.positions_before is mapping %}{{ m.positions_before | length }}{% else %}?{% endif %} → {% if m.positions_after is mapping %}{{ m.positions_after | length }}{% else %}?{% endif %}</dd>
+  <dt>Universe</dt><dd>{{ m.universe_size if m.universe_size is not none else '' }}</dd>
+  <dt>Regime</dt><dd>{% if m.regime %}index {{ m.regime.index_close }} vs MA200 {{ m.regime.ma200 }}: <strong>{{ 'BULL' if m.regime.bull else 'BEAR' }}</strong>{% endif %}</dd>
+  <dt>Ranked</dt><dd>{{ m.ranked_count if m.ranked_count is not none else '' }}</dd>
+  <dt>Resize</dt><dd>{% if m.resize_performed is not none %}{{ 'performed' if m.resize_performed else 'not due' }} · last resize {{ m.last_resize_date_before or 'never' }} → {{ m.last_resize_date_after or 'never' }}{% endif %}</dd>
+</dl>
+{% elif tab == 'log' %}
+<pre class="log">{% for line in log %}{{ line }}
+{% endfor %}</pre>
+{% elif tab == 'meta' %}
+<pre class="json">{{ meta_json }}</pre>
+{% else %}
+{% include "partials/table.html" %}
+{% endif %}
+{% endblock %}

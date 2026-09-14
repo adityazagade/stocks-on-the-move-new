@@ -1,0 +1,16 @@
+<div id="{{ table_id }}" class="table-wrap">
+<table class="data">
+<thead><tr>
+{% for c in table.columns %}{% set next_desc = (sort == c and not desc) %}{% set url = base ~ '?sort=' ~ c ~ '&desc=' ~ ('true' if next_desc else 'false') %}
+<th><a href="{{ url }}" hx-get="{{ url }}" hx-target="#{{ table_id }}" hx-swap="outerHTML" hx-push-url="true">{{ c }}{% if sort == c %}<span class="dir">{{ '▼' if desc else '▲' }}</span>{% endif %}</a></th>
+{% endfor %}
+</tr></thead>
+<tbody>
+{% for row in table.rows %}
+<tr class="{{ 'held' if row.get('held') == 'true' }}">{% for c in table.columns %}{% set v = row.get(c, '') %}<td class="{{ 'num' if is_number(v) }}">{{ v }}</td>{% endfor %}</tr>
+{% endfor %}
+{% if not table.rows %}<tr><td colspan="{{ table.columns | length or 1 }}" class="empty">{{ empty_text }}</td></tr>{% endif %}
+</tbody>
+</table>
+<p class="count">{{ table.rows | length }} rows</p>
+</div>

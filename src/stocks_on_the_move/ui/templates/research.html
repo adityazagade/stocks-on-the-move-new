@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Research{% endblock %}
+{% block content %}
+<h1>Research <small>{{ backtests | length }} backtests under {{ band.runs_dir }}/backtests</small></h1>
+{% if note %}<p class="warn note"><strong>Read first:</strong> {{ note }}</p>{% endif %}
+{% if backtests %}
+<form method="get" action="/research" class="select">
+{% for b in backtests %}<label><input type="checkbox" name="select" value="{{ b.name }}" {{ 'checked' if b.name in selected }}> <a href="/research/{{ b.name }}">{{ b.label }}</a> <small>{{ b.name }}</small></label>
+{% endfor %}<button type="submit">compare the checked</button>
+</form>
+<h2>Summary side by side</h2>
+<div class="table-wrap">
+<table class="data compare">
+<thead><tr><th>field</th>{% for b in chosen %}<th><a href="/research/{{ b.name }}">{{ b.label }}</a></th>{% endfor %}</tr></thead>
+<tbody>
+{% for field, cells in comparison %}<tr><th>{{ field }}</th>{% for v in cells %}<td class="{{ 'num' if is_number(v) }}">{{ v }}</td>{% endfor %}</tr>
+{% endfor %}</tbody>
+</table>
+</div>
+<h2>Equity</h2>
+{% include "partials/equity_chart.html" %}
+{% if ribbon %}
+<h2>Regime <small>{{ chosen[0].label }}: a bull week green, a bear week red</small></h2>
+<div class="ribbon">{% for d, bull in ribbon %}<i class="{{ 'bull' if bull else 'bear' }}" title="{{ d }}"></i>{% endfor %}</div>
+{% endif %}
+{% else %}
+<p class="empty">No backtests yet. <code>uv run python -m stocks_on_the_move.backtest run --from … --to … --label …</code> writes one here (ADR-023).</p>
+{% endif %}
+{% endblock %}

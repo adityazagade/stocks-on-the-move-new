@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Console{% endblock %} · Stocks on the Move</title>
+<link rel="stylesheet" href="/static/vendor/uplot.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/vendor/htmx.min.js" defer></script>
+<script src="/static/vendor/uplot.iife.min.js" defer></script>
+</head>
+<body class="mode-{{ band.booking_mode }}">
+<header class="band">
+  <span class="band-mode">{{ band.booking_mode }}</span>
+  <span class="band-text">
+    {% if band.booking_mode == 'live' %}a booking run from this environment <strong>sends orders to Kite</strong>{% else %}a booking run from this environment sends no order and still writes the ledgers{% endif %}
+    · RUNS_DIR <code>{{ band.runs_dir }}</code>{% if band.strategy %} · STRATEGY <code>{{ band.strategy }}</code>{% endif %}
+  </span>
+</header>
+<nav class="top">
+  <a href="/runs" class="{{ 'active' if nav == 'runs' }}">Runs</a>
+  <a href="/account" class="{{ 'active' if nav == 'account' }}">Account</a>
+  <a href="/research" class="{{ 'active' if nav == 'research' }}">Research</a>
+  <a href="/settings" class="{{ 'active' if nav == 'settings' }}">Settings</a>
+</nav>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>
