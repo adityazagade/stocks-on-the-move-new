@@ -56,7 +56,17 @@ from stocks_on_the_move.reporting import (
     UNIVERSE_COLUMNS,
     ranking_rows,
 )
-from stocks_on_the_move.rules import ExitCheck, RankItem, Sizing, evaluate, exit_check, rank, regime, size
+from stocks_on_the_move.rules import (
+    ExitCheck,
+    RankItem,
+    Sizing,
+    evaluate,
+    exit_check,
+    rank,
+    regime,
+    size,
+    unrankable,
+)
 from stocks_on_the_move.universe import NseArchives, get_universe
 
 logger = logging.getLogger(__name__)
@@ -95,13 +105,23 @@ def index_snapshot(ctx: RunContext) -> Snapshot:
 
 
 def rank_step(ctx: RunContext, universe: list[Instrument]) -> list[RankItem]:
-    """Step 6: gather, evaluate every instrument into universe.csv, rank what passed."""
+    """Step 6: gather, evaluate every instrument into universe.csv, rank, write ranking.csv (ADR-033).
+
+    The ranking holds what ``rank_scope`` asks for — the qualified names, or
+    every name that has a score with its qualification beside it — followed by
+    the names with no score at all, listed but never placed.
+    """
     params = strategy_params(ctx)
     gather_snapshots(ctx, universe)
     evaluations = [evaluate(ctx.snapshots[i.tradingsymbol], params) for i in universe]
     ctx.artifacts.write_table("universe", UNIVERSE_COLUMNS, [e.row() for e in evaluations])
-    ranks = rank(evaluations)
-    logger.info("Ranked universe: %d symbols", len(ranks))
+    ranks = rank(evaluations, params)
+    ctx.artifacts.write_table(
+        "ranking", RANKING_COLUMNS, ranking_rows(ranks, ctx.portfolio.positions, unrankable(evaluations))
+    )
+    ctx.artifacts.record(ranked_count=len(ranks))
+    buyable = sum(1 for r in ranks if r.qualified)
+    logger.info("Ranked universe: %d symbols, %d of them buyable", len(ranks), buyable)
     return ranks
 
 
@@ -363,6 +383,9 @@ def buy_candidates(ctx: RunContext, ranks: list[RankItem], bull: bool, account_e
             if r.symbol in pf.sold:
                 row["decision"] = "SKIP:sold_this_run"
                 continue
+            if not r.qualified:  # ranked on its momentum, but an entry filter says not to open it (ADR-033)
+                row["decision"] = f"SKIP:disqualified:{r.reason}"
+                continue
             try:
                 qty = size_for(ctx, r.symbol, account_equity).target_qty
             except Exception as exc:
@@ -479,9 +502,6 @@ def run(ctx: RunContext) -> None:
     # 6) Gather one snapshot per instrument and holding, evaluate, rank
     universe = get_universe(ctx, symbols)
     ranks = rank_step(ctx, universe)
-    total = len(ranks)  # maps best=0.0, worst=1.0
-    art.record(ranked_count=total)
-    art.write_table("ranking", RANKING_COLUMNS, ranking_rows(ranks, pf.positions))
     for r in ranks[:20]:
         logger.info("Top %s: score=%.4f ann=%.2f%% R²=%.2f", r.symbol, r.score, 100 * r.annual_slope, r.r2)
 

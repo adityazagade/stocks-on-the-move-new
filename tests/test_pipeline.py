@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 import json
 import logging
 from datetime import timedelta
@@ -24,6 +25,7 @@ from stocks_on_the_move.ledger import (
     save_state,
     write_portfolio,
 )
+from stocks_on_the_move.params import StrategyParams
 from stocks_on_the_move.pipeline import (
     gather_snapshots,
     prune_portfolio,
@@ -657,6 +659,68 @@ def test_the_fraction_at_zero_buys_the_fragment_and_at_one_only_full_positions(m
     m.buy_candidates(ctx, ranks, bull=True, account_equity=ctx.portfolio.cash + 100_000.0)
     rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "candidates.csv")}
     assert (rows["AAA"]["decision"], rows["BBB"]["decision"]) == ("SKIP:below_min_fraction", "BUY")
+
+
+# ── ADR-033: ranked on momentum, bought only when qualified ──────────────
+
+
+def test_a_disqualified_candidate_is_skipped_and_the_walk_goes_on(make_context):
+    """It keeps its place in the ranking; the buy step is the only thing that reads the flag."""
+    ctx, ranks = _two_candidates(make_context, min_position_fraction=0.0)
+    ranks[0] = dataclasses.replace(ranks[0], qualified=False, reason="gap")  # AAA ranks first, cannot be bought
+
+    m.buy_candidates(ctx, ranks, bull=True, account_equity=ctx.portfolio.cash + 100_000.0)
+
+    rows = {r["symbol"]: r for r in read_table(ctx.artifacts.path / "candidates.csv")}
+    assert rows["AAA"]["decision"] == "SKIP:disqualified:gap"
+    assert rows["AAA"]["rank"] == "1"  # still first: the skip is not a demotion
+    assert rows["BBB"]["decision"] == "BUY"  # and the walk carried on past it
+    assert set(ctx.portfolio.positions) == {"ZZZ", "BBB"}
+
+
+def test_the_ranking_carries_the_qualification_and_lists_the_unscoreable_last(make_context):
+    """ranking.csv holds every name: the scored in order, then the ones there was no score for (ADR-033)."""
+    broker = bull_market(DRIFTS)
+    broker.add_equity("SHORTY", 90, trending_closes(10, daily=0.004), end=TODAY)  # too little history to score
+    broker.add_equity("FALLER", 91, trending_closes(260, daily=-0.003), end=TODAY)  # scoreable, below its MA100
+    universe = {**DRIFTS, "SHORTY": 0.0, "FALLER": 0.0}
+    ctx = make_context(broker, cut_off_pct=1.0, artifacts=True)  # every name inside the cut-off, so the flag decides
+    ctx.params = dataclasses.replace(StrategyParams.from_settings(ctx.settings), rank_scope="universe")
+    ctx.universe = StaticUniverse(universe)
+
+    run(ctx)
+
+    rows = read_table(ctx.artifacts.path / "ranking.csv")
+    assert [r["symbol"] for r in rows[:5]] == ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    assert all(r["qualified"] == "true" and r["reason"] == "" for r in rows[:5])
+
+    faller = next(r for r in rows if r["symbol"] == "FALLER")
+    assert faller["qualified"] == "false" and faller["reason"] == "below_ma100"
+    assert faller["rank"] == "6" and float(faller["score"]) < 0  # ranked on its own momentum, at the back on merit
+
+    shorty = rows[-1]  # no score, so no rank and no position: listed, never placed
+    assert shorty["symbol"] == "SHORTY"
+    assert (shorty["rank"], shorty["pct_rank"], shorty["score"]) == ("", "", "")
+    assert shorty["qualified"] == "false" and shorty["reason"] == "history"
+
+    # and nothing unbuyable was bought
+    decisions = {r["symbol"]: r["decision"] for r in read_table(ctx.artifacts.path / "candidates.csv")}
+    assert decisions.get("FALLER") == "SKIP:disqualified:below_ma100"
+    assert "SHORTY" not in decisions and "FALLER" not in ctx.portfolio.positions
+
+
+def test_the_default_scope_ranks_only_what_can_be_bought(make_context):
+    """The live default is unchanged until ADR-033's gate passes: the disqualified stay out of the list."""
+    broker = bull_market(DRIFTS)
+    broker.add_equity("FALLER", 91, trending_closes(260, daily=-0.003), end=TODAY)
+    ctx = make_context(broker, cut_off_pct=0.5, artifacts=True)
+    ctx.universe = StaticUniverse({**DRIFTS, "FALLER": 0.0})
+
+    run(ctx)
+
+    rows = read_table(ctx.artifacts.path / "ranking.csv")
+    assert [r["symbol"] for r in rows] == ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    assert {r["status"] for r in read_table(ctx.artifacts.path / "universe.csv")} == {"ranked", "disqualified"}
 
 
 # ── ADR-029: the account lives at the root of runs/ and bootstraps from nothing ──

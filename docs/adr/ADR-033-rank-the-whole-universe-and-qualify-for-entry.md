@@ -295,4 +295,39 @@ and needs no special case.
 
 ## Implementation Status
 
-Accepted by the owner on 2026-09-14. Not yet implemented.
+Accepted by the owner on 2026-09-14. The Decision is implemented behind
+`rank_scope`, which defaults to `"qualified"`: the live run's trading is
+unchanged and the gate below still decides whether the default flips.
+
+- `StrategyParams.rank_scope` (`"qualified"` | `"universe"`), read by `rank`.
+  `--set rank_scope=universe` selects it in a backtest.
+- `evaluate` no longer stops at the first failing rule. A name with no score —
+  `error:<type>`, `history`, `insufficient_data` — is excluded and carries no
+  `RankItem`, as before. Any name that has a score gets one, with `qualified`
+  and the first entry rule it failed (`disqualification`) recorded on it.
+  Every metric is measured whatever failed, so `universe.csv` is filled in for
+  a disqualified name where it used to be blank, and `status` reads `ranked`,
+  `disqualified` or `excluded`.
+- `ranking.csv` gains `qualified` and `reason`, and ends with the unrankable
+  names, their rank, `pct_rank` and score blank (`unrankable`, `ranking_rows`).
+  `rank_step` writes it, next to the `universe.csv` it already wrote.
+- `buy_candidates` skips a disqualified name with
+  `SKIP:disqualified:<reason>`, consuming no `max_positions` slot and not
+  stopping the walk.
+- `exit_check` states the gap rule itself, so a gapped name that now holds a
+  rank still exits on it. The volume floor and the ATR ceiling are not exits.
+- Tests: the qualification through the chain, a disqualified name ranked on
+  its momentum rather than pushed to the end, the two scopes, the unrankable
+  tail's blanks, the gap exit and the knob that disables it, volume and ATR
+  not exiting a holding, and the `SKIP:disqualified` walk.
+- **The golden files were not regenerated.** They were already failing on the
+  commit this work started from (`4d5c7ab`, `e5fe55e`), so a regeneration now
+  would fold three behaviour changes into one unreviewable diff, which is the
+  thing ADR-009 exists to prevent. This change's own effect on them was
+  isolated by regenerating on both trees and diffing those against each other:
+  only `ranking.csv` and `universe.csv` move, in the two ways described above.
+  `exits.csv`, `sizing.csv`, `candidates.csv`, `trades.csv`, `orders.csv` and
+  `portfolio_after.csv` are byte-identical — no trade changed.
+- **Still to do**: the three backtest runs of the gate, and then the owner's
+  decision on the default and on `CUT_OFF_PCT`, whose description in
+  `settings.py` is left alone until the denominator actually changes.

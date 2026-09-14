@@ -165,7 +165,7 @@ behind each step.
 | 3.5 | Kill switch | `liquidate_all` | Sells everything, writes `OUT_FILE`, returns; with `PLAN_ONLY=1` it plans the liquidation and sells nothing |
 | 4 | Universe | `NseArchives.symbols`, or the `UniverseSource` on the context | Public CSVs from NSE archives, no auth, with a last-good copy under `CACHE_DIR` for the day NSE is down (ADR-020); tests inject a `StaticUniverse`. Empty universe aborts the run |
 | 5 | Regime | `index_snapshot`, `regime` | Index close vs its 200-day simple moving average (ADR-024). Only gates buys, never sells |
-| 6 | Rank | `get_universe`, `rank_step` (`gather_snapshots`, `evaluate`, `rank`) | One candle read per instrument and holding into `ctx.snapshots`; filters then scores; see section 4 |
+| 6 | Rank | `get_universe`, `rank_step` (`gather_snapshots`, `evaluate`, `rank`) | One candle read per instrument and holding into `ctx.snapshots`; scores, then qualifies; writes `universe.csv` and `ranking.csv`; see section 4 |
 | 7 | Exits | `prune_portfolio` (`decide_exits`, then `trade`) | Runs every week, bull or bear |
 | 8 | Raise cash | `raise_cash_if_needed` | Only when a withdrawal drove cash negative |
 | 9 | Resize | `resize_positions`, `size` | When `strategy_state.json` records no rebalance or one twelve or more days ago (ADR-027), or `FORCE_RESIZE=1`; writes the date back |
@@ -175,33 +175,60 @@ behind each step.
 
 ### Filters and scoring (step 6)
 
-A stock is ranked only if it passes all of these, in order:
+Two questions, not one (ADR-033). First, **can the name be scored at all?**
+It needs to be listed by Kite as `instrument_type == "EQ"` in segment `NSE`
+with its base symbol in the NIFTY 500 list, to have
+`max(MA_FILTER_100, LOOKBACK_LONG + 1, REG_LOOKBACK + 1)` daily candles, and
+to come back with a score that is not `nan`. A name that fails any of these
+has no momentum to place it by: it is **excluded**, it takes no rank, and a
+holding in that state exits as `unranked:<cause>`. In `ranking.csv` it is
+listed at the end with its rank, `pct_rank` and `score` left blank — blank
+and not zero, because a zero would be a position in the ranking that was
+assigned rather than measured, and zero is the middle of a list whose scores
+go negative.
 
-1. Kite lists it as `instrument_type == "EQ"` in segment `NSE` and its base
-   symbol is in the NIFTY 500 list.
-2. Enough daily candles: `max(MA_FILTER_100, LOOKBACK_LONG + 1, REG_LOOKBACK + 1)` rows.
-3. Last close above the 100-day simple moving average (ADR-024).
-4. 20-day average volume at least `MIN_VOLUME`.
-5. ATR(20) no more than `MAX_ATR_PCT` of price.
-6. No single-day close-to-close move of `MAX_GAP_PCT` (default 15 %) or more
-   in the last 90 trading days (ADR-025); `1` disables the rule.
+Second, **may the name be bought?** These are the entry filters, in order,
+and the first one that fails names the verdict:
 
-Every instrument's verdict, `ranked` or `excluded` with the rule that
-stopped it (`history`, `below_ma100`, `volume`, `atr_pct`, `gap`,
-`insufficient_data`, `error:<type>`), is a row in the run's
-`universe.csv` (ADR-006), so a symbol disappearing from the ranking is a
-file open, not a re-run at DEBUG.
+1. Last close above the 100-day simple moving average (ADR-024) — `below_ma100`.
+2. 20-day average volume at least `MIN_VOLUME` — `volume`.
+3. ATR(20) no more than `MAX_ATR_PCT` of price — `atr_pct`.
+4. No single-day close-to-close move of `MAX_GAP_PCT` (default 15 %) or more
+   in the last 90 trading days (ADR-025), `1` disables the rule — `gap`.
+
+A name that fails one of these is **disqualified**, not dropped: it is still
+scored and still takes the place its momentum earns it, and only step 11
+reads the flag, skipping it with `SKIP:disqualified:<reason>`. Which of the
+two lists the ranking actually holds is `rank_scope` in `StrategyParams`:
+`qualified`, the live default, ranks only the buyable names as the strategy
+always has; `universe` ranks every scoreable name with its qualification
+beside it. The switch exists so the backtest can compare them, and ADR-033's
+gate decides which becomes the default.
+
+Every instrument's verdict — `ranked`, `disqualified` or `excluded`, with the
+rule that stopped it (`history`, `below_ma100`, `volume`, `atr_pct`, `gap`,
+`insufficient_data`, `error:<type>`) and every metric measured whatever
+failed — is a row in the run's `universe.csv` (ADR-006), so a symbol
+disappearing from the ranking is a file open, not a re-run at DEBUG.
 
 ### Exit rules (step 7)
 
 A holding is sold when any of these hold:
 
-- it is not in the ranking at all (it failed a filter above, or left the
-  index); `exits.csv` says which as `unranked:<reason>` (ADR-025),
-- its percentile rank is worse than `CUT_OFF_PCT` (default top 20 %),
+- it is not in the ranking at all — there was no score to place it by, or it
+  left the index; `exits.csv` says which as `unranked:<reason>` (ADR-025),
+- its percentile rank is worse than `CUT_OFF_PCT` (default top 20 %), over
+  whatever `rank_scope` put in the list,
 - its close is at or below its 100-day moving average,
+- a single-day close-to-close move of `MAX_GAP_PCT` or more in the last 90
+  trading days (ADR-025).
 - trailing stop: close is more than `EXIT_MULTIPLE` ATRs below the 40-day
   rolling maximum close.
+
+The volume floor and the ATR ceiling are deliberately **not** here. Both were
+chosen to keep a name out of a new position, neither as a reason to close a
+working one; before ADR-033 they were exits only because failing them dropped
+a name out of the ranking (ADR-033).
 
 Sold symbols go into `ctx.portfolio.sold` and are not bought back in the
 same run. A holding that should be sold but cannot be priced (no quote, no
@@ -431,7 +458,10 @@ the result lands under `runs/backtests/<from>_<to>-<label>/` as `equity.csv`,
 `weekly.csv`, `trades.csv`, `params.json` and `summary.json`. `--set
 lookback_short=21` overrides a `StrategyParams` field for a variant, and
 `--set score=slope` ranks by the book's regression slope instead of the blend
-(ADR-028's comparison);
+(ADR-028's comparison), and `--set rank_scope=universe` ranks every scoreable
+name with its qualification beside it instead of only the buyable ones
+(ADR-033's comparison, where it pairs with `--set cut_off_pct=...` because the
+denominator changes);
 `compare baseline long` prints the summaries side by side. Read the first
 line of every summary before the numbers: the universe is today's
 constituents over the whole range and fills are at the close with fixed
