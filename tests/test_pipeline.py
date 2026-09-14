@@ -685,8 +685,7 @@ def test_the_ranking_carries_the_qualification_and_lists_the_unscoreable_last(ma
     broker.add_equity("FALLER", 91, trending_closes(260, daily=-0.003), end=TODAY)  # scoreable, below its MA100
     universe = {**DRIFTS, "SHORTY": 0.0, "FALLER": 0.0}
     ctx = make_context(broker, cut_off_pct=1.0, artifacts=True)  # every name inside the cut-off, so the flag decides
-    ctx.params = dataclasses.replace(StrategyParams.from_settings(ctx.settings), rank_scope="universe")
-    ctx.universe = StaticUniverse(universe)
+    ctx.universe = StaticUniverse(universe)  # the universe scope is the default (ADR-033)
 
     run(ctx)
 
@@ -709,11 +708,12 @@ def test_the_ranking_carries_the_qualification_and_lists_the_unscoreable_last(ma
     assert "SHORTY" not in decisions and "FALLER" not in ctx.portfolio.positions
 
 
-def test_the_default_scope_ranks_only_what_can_be_bought(make_context):
-    """The live default is unchanged until ADR-033's gate passes: the disqualified stay out of the list."""
+def test_the_qualified_scope_still_ranks_only_what_can_be_bought(make_context):
+    """The opt-out: rank_scope="qualified" keeps the disqualified out of the list, as the strategy once did."""
     broker = bull_market(DRIFTS)
     broker.add_equity("FALLER", 91, trending_closes(260, daily=-0.003), end=TODAY)
     ctx = make_context(broker, cut_off_pct=0.5, artifacts=True)
+    ctx.params = dataclasses.replace(StrategyParams.from_settings(ctx.settings), rank_scope="qualified")
     ctx.universe = StaticUniverse({**DRIFTS, "FALLER": 0.0})
 
     run(ctx)

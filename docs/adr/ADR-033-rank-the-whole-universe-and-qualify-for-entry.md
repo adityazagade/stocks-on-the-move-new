@@ -1,6 +1,6 @@
 # ADR-033: Rank the whole universe and qualify names for entry
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-14
 - **Last Updated**: 2026-09-14
 - **Author**: Aditya Zagade
@@ -328,6 +328,25 @@ unchanged and the gate below still decides whether the default flips.
   only `ranking.csv` and `universe.csv` move, in the two ways described above.
   `exits.csv`, `sizing.csv`, `candidates.csv`, `trades.csv`, `orders.csv` and
   `portfolio_after.csv` are byte-identical — no trade changed.
-- **Still to do**: the three backtest runs of the gate, and then the owner's
-  decision on the default and on `CUT_OFF_PCT`, whose description in
-  `settings.py` is left alone until the denominator actually changes.
+**Completed on 2026-09-14.** The owner set `rank_scope` to `"universe"` as the
+live default without running the gate's three backtests, waiving it: the
+ranking is now every scoreable name, and the qualification decides only
+whether step 11 may open a position. `"qualified"` remains as the opt-out.
+
+- The golden files moved in `ranking.csv`, `exits.csv` and `candidates.csv`
+  only. `trades.csv`, `orders.csv` and `portfolio_after.csv` are identical in
+  both weeks, so no trade changed on the fixtures. The clearest gain is in
+  `exits.csv`: `DRIFTER` and `IDEAX-BE` read `unranked:below_ma100` before and
+  now read `rank_cutoff;below_ma100;trailing_stop` at ranks 31 and 29 — the
+  same decision, with the rules that actually fired instead of the single
+  opaque one.
+- **The fixtures understate the live effect.** The golden universe is 31
+  names, where the ranked count went 22 → 31. The NIFTY 500 run of
+  2026-09-14 had 200 of 500 passing, so there the denominator goes 200 → 500
+  and `CUT_OFF_PCT = 0.20` widens from about the top 40 names to about the
+  top 100. That materially loosens the `rank_cutoff` exit, which is what the
+  gate's variant C (`cut_off_pct=0.08`) existed to measure. The gate was
+  waived, not answered; `CUT_OFF_PCT` keeps its 0.20, and its description in
+  `settings.py` now says what the fraction divides.
+- **Recommended before the next live run**: a `PLAN_ONLY=1` run, read against
+  the previous week's, to see how many holdings the wider band now keeps.

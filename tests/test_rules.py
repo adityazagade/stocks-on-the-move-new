@@ -194,11 +194,12 @@ def test_rank_orders_by_score_and_scopes_the_list():
     falling = evaluate(snapshot("FALLING", trending_closes(150, daily=-0.003)), P)  # scored, disqualified
     evaluations = [good, out, better, falling]
 
-    # the default keeps the strategy's long-standing list: only what may be bought
-    assert [r.symbol for r in rank(evaluations, P)] == ["BETTER", "GOOD"]
+    # the qualified scope is the opt-out: only what may be bought
+    qualified_only = rank(evaluations, dataclasses.replace(P, rank_scope="qualified"))
+    assert [r.symbol for r in qualified_only] == ["BETTER", "GOOD"]
 
-    # the universe scope ranks the disqualified name too, on its own momentum, flagged
-    whole = rank(evaluations, dataclasses.replace(P, rank_scope="universe"))
+    # the default ranks the disqualified name too, on its own momentum, flagged
+    whole = rank(evaluations, P)
     assert [r.symbol for r in whole] == ["BETTER", "GOOD", "FALLING"]
     assert [r.qualified for r in whole] == [True, True, False]
     assert whole[-1].reason == "below_ma100"

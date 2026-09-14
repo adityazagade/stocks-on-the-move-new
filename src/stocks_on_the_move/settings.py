@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     )
 
     # ── Sizing and risk ──────────────────────────────────────────────────
-    account_value: float = Field(100_000, ge=0, description="Legacy account size. Only the default for STARTING_CASH.")
+    account_value: float = Field(0, ge=0, description="Legacy account size. Only the default for STARTING_CASH.")
     starting_cash: float = Field(
         default_factory=lambda data: data["account_value"],
         ge=0,
@@ -118,7 +118,14 @@ class Settings(BaseSettings):
         ),
     )
     cut_off_pct: float = Field(
-        0.20, gt=0, le=1, description="Hold and buy only names ranked in this top fraction of the universe."
+        0.20,
+        gt=0,
+        le=1,
+        description=(
+            "Hold and buy only names ranked in this top fraction of the ranking. Since ADR-033 the ranking is "
+            "every scoreable name in the universe, not only those that pass the entry filters, so this fraction "
+            "covers more names than it did."
+        ),
     )
     exit_multiple: float = Field(
         5.0, gt=0, description="Trailing stop: sell when the close is this many ATRs below the 40-day high close."

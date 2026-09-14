@@ -200,10 +200,13 @@ A name that fails one of these is **disqualified**, not dropped: it is still
 scored and still takes the place its momentum earns it, and only step 11
 reads the flag, skipping it with `SKIP:disqualified:<reason>`. Which of the
 two lists the ranking actually holds is `rank_scope` in `StrategyParams`:
-`qualified`, the live default, ranks only the buyable names as the strategy
-always has; `universe` ranks every scoreable name with its qualification
-beside it. The switch exists so the backtest can compare them, and ADR-033's
-gate decides which becomes the default.
+`universe`, the live default, ranks every scoreable name with its
+qualification beside it, so a name's place is its momentum and nothing else;
+`qualified` is the opt-out that ranks only the buyable names, as the strategy
+did before ADR-033. Note what the default means for `CUT_OFF_PCT`: it now
+divides the whole scoreable universe, not the names that happened to pass the
+filters, so its width no longer moves with market breadth — and the same
+percentage covers many more names than it used to.
 
 Every instrument's verdict — `ranked`, `disqualified` or `excluded`, with the
 rule that stopped it (`history`, `below_ma100`, `volume`, `atr_pct`, `gap`,
