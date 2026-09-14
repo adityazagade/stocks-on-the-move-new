@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from fakes import EVEN_WEEK_WEDNESDAY, FakeBroker, make_candles, trending_closes
+from fakes import EVEN_WEEK_WEDNESDAY, FULL_HISTORY, FakeBroker, make_candles, trending_closes
 from stocks_on_the_move import pipeline as m
 from stocks_on_the_move.broker import Instrument, Order, Quote
 from stocks_on_the_move.context import Fill, build_token_cache, token_of
@@ -377,8 +377,8 @@ def test_a_candle_fetch_that_throws_is_an_error_row_not_a_crash(make_context):
 
 def test_gather_covers_the_universe_and_the_holdings_once(make_context):
     broker = FakeBroker()
-    broker.add_equity("AAA", 1, trending_closes(120), end=TODAY)
-    broker.add_equity("HELD", 2, trending_closes(120), end=TODAY)
+    broker.add_equity("AAA", 1, trending_closes(FULL_HISTORY), end=TODAY)
+    broker.add_equity("HELD", 2, trending_closes(FULL_HISTORY), end=TODAY)
     ctx = make_context(broker)
     build_token_cache(ctx)
     ctx.portfolio.positions = {"HELD": 5, "GHOST": 1}  # GHOST has no instrument
@@ -407,8 +407,8 @@ def test_record_trade_mirrors_the_ledger_into_trades_csv(make_context):
 
 def test_prune_writes_a_verdict_per_holding(make_context):
     broker = FakeBroker()
-    broker.add_equity("KEEP", 1, trending_closes(120, daily=0.002), end=TODAY)
-    broker.add_equity("DROP", 2, trending_closes(120, daily=0.002), end=TODAY)
+    broker.add_equity("KEEP", 1, trending_closes(FULL_HISTORY, daily=0.002), end=TODAY)
+    broker.add_equity("DROP", 2, trending_closes(FULL_HISTORY, daily=0.002), end=TODAY)
     ctx = make_context(broker, cut_off_pct=1.0, artifacts=True)
     init_cash_balance(ctx)
     build_token_cache(ctx)

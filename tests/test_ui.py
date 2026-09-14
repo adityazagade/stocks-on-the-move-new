@@ -313,13 +313,17 @@ def test_sorting_is_a_round_trip_and_htmx_gets_only_the_table(client):
     assert "<html" in full
     partial = client.get(url, params={"sort": "score", "desc": "true"}, headers={"HX-Request": "true"}).text
     assert "<html" not in partial and "<table" in partial
-    rows = _rows(EXPECTED / "ranking.csv")
-    top = max(rows, key=lambda r: float(r["score"]))["score"]
-    first_row = partial.split("<tbody>")[1].split("</tr>")[0]
-    assert f">{top}<" in first_row
+    # the ranking now ends in an unrankable tail whose score is blank (ADR-033), and a blank sorts
+    # last ascending but first descending, so pin the round trip on the two scores' relative order
+    scored = [r for r in _rows(EXPECTED / "ranking.csv") if r["score"]]
+    top = max(scored, key=lambda r: float(r["score"]))["score"]
+    bottom = min(scored, key=lambda r: float(r["score"]))["score"]
+    body = partial.split("<tbody>")[1]
+    assert body.index(f">{top}<") < body.index(f">{bottom}<")
     ascending = client.get(url, params={"sort": "score"}, headers={"HX-Request": "true"}).text
-    bottom = min(rows, key=lambda r: float(r["score"]))["score"]
-    assert f">{bottom}<" in ascending.split("<tbody>")[1].split("</tr>")[0]
+    body = ascending.split("<tbody>")[1]
+    assert body.index(f">{bottom}<") < body.index(f">{top}<")
+    assert f">{bottom}<" in body.split("</tr>")[0]  # ascending still opens on the lowest score
 
 
 def test_sort_rows_puts_numbers_first_then_text_then_blanks():
