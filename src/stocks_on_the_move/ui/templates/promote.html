@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Promote{% endblock %}
+{% block content %}
+<h1>Promote <small>{{ files.next }} over {{ files.current }}</small></h1>
+{% if done %}<p class="warn ok"><strong>Promoted.</strong> {{ files.current }} now holds what the broker confirmed; the next run starts from it.</p>{% endif %}
+{% if error %}<p class="warn error"><strong>Not promoted.</strong> {{ error }}</p>{% endif %}
+<p class="meta">The human act between step 12 and the next run's step 2: compare next with Kite's positions page, then copy it over current. The console copies the bytes and writes nothing else.</p>
+{% if newest %}<p class="meta">newest completed booking run: <a href="/runs/{{ newest.id }}">{{ newest.id }}</a> ({{ newest.mode }}), finished {{ newest.finished }}</p>{% endif %}
+<div class="columns">
+<div>
+<h2>Current against next</h2>
+<table class="data narrow">
+<thead><tr><th>symbol</th><th class="num">current</th><th class="num">next</th><th>change</th></tr></thead>
+<tbody>
+{% for r in rows %}<tr class="change-{{ r.change }}"><td>{{ r.symbol }}</td><td class="num">{{ r.current }}</td><td class="num">{{ r.next }}</td><td>{{ r.change }}</td></tr>
+{% endfor %}{% if not rows %}<tr><td colspan="4" class="empty">both files are empty</td></tr>{% endif %}
+</tbody>
+</table>
+</div>
+<div>
+<h2>Orders of that run</h2>
+{% if orders %}{% with table=orders, empty_text='no orders' %}{% include "partials/plain_table.html" %}{% endwith %}{% else %}<p class="empty">no completed booking run</p>{% endif %}
+</div>
+</div>
+<h2>Copy</h2>
+{% if check.allowed %}
+<form method="post" action="/promote" class="start">
+  <input type="hidden" name="{{ token_field }}" value="{{ token }}">
+  <button type="submit" class="btn paper">Promote: copy next over current</button>
+</form>
+{% else %}
+<p class="warn">Not offered: {{ check.reason }}.</p>
+{% endif %}
+{% endblock %}

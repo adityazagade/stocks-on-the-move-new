@@ -1,6 +1,6 @@
 # ADR-031: A local operator console over `runs/`
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Date**: 2026-09-14
 - **Last Updated**: 2026-09-14
 - **Author**: Aditya Zagade
@@ -306,6 +306,52 @@ untouched.
 - htmx: https://htmx.org/
 - uPlot: https://github.com/leeoniya/uPlot
 - Jinja: https://jinja.palletsprojects.com/
+
+## Implementation Status
+
+Implemented on 2026-09-14 in three commits on this ADR, the golden test
+untouched by all of them; 40 tests in `tests/test_ui.py`.
+
+- **Stage one, read-only** (`4f06520`): the `ui` subpackage and the `ui`
+  dependency group in uv's default groups; htmx 2.0.10 and uPlot 1.6.32
+  vendored with their digests in `static/vendor/VERSIONS`, which a test
+  checks; the Runs, Run, Account, Research and Settings pages; the
+  import-boundary test; a fixture tree assembled from the golden tables.
+- **Stage two, launch and watch** (`32552c5`): the Today page with the
+  weekday guard, the session's owner and age, and the newest run; the
+  launcher with `PLAN_ONLY` as the only overlay and one child at a time;
+  the typed `LIVE`; no booking button under `KILL_SWITCH=1`; the
+  per-process token on every POST and the Host check; the rail polling and
+  the log over server-sent events; the login URL as a link, never text.
+- **Stage three, the two file writes** (the third commit): `writes.py`
+  holds the promote copy and the cashflow append, the latter through
+  `ledger.append_cashflow`, extracted from the `ENV_CASHFLOW` path so both
+  write the same row. The Promote page shows current against next beside
+  the newest completed booking run's orders and offers the copy only for
+  the file that run wrote, with no booking run going and next newer than
+  current. The Account page's form appends one validated row. A test scans
+  the package for every call that writes and finds them in `writes.py`
+  alone, where the trades ledger is not named.
+
+Decisions taken while implementing, within the terms above:
+
+- The rail's twelve steps are lit by the evidence each leaves in the run
+  directory or in `run.json`; steps 3, 8 and 10 leave none and take the
+  next step's.
+- A run's tables are shown as their files hold them, unformatted. The
+  summary's cash and equity from `run.json` are shown to two decimals, the
+  raw values one tab away.
+- `KILL_SWITCH=1` in the environment shows as the booking mode `kill` in
+  the band and removes the booking button; a plan still starts, and plans
+  the liquidation.
+- The three questions in Notes stayed as drafted: no `FORCE_RESIZE`
+  checkbox, no trace of a promotion beyond the files' modification times,
+  a dependency group rather than an extra.
+
+Step 4 of the plan, the owner's validation against a scratch and the real
+`RUNS_DIR`, is the owner's. During implementation the console rendered
+every page over the real tree, the abandoned paper run of 2026-09-13
+labelled as such, and no credential reached a page.
 
 ## Notes
 

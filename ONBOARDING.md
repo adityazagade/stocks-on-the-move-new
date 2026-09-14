@@ -253,9 +253,10 @@ the cache directory.
 The two ledgers are the source of truth for cash, which means:
 
 - never hand-edit `runs/trades_ledger.csv`,
-- to deposit or withdraw, append a row to `runs/cash_ledger.csv` or set
-  `ENV_CASHFLOW` for exactly one run. It appends a dated row every time the
-  process starts with it set, so never leave it in `.env`,
+- to deposit or withdraw, append a row to `runs/cash_ledger.csv`, record it
+  on the console's Account page, which appends the same row (ADR-031), or
+  set `ENV_CASHFLOW` for exactly one run. It appends a dated row every time
+  the process starts with it set, so never leave it in `.env`,
 - if you change `STARTING_CASH` you change the meaning of every historical row.
 
 **A step decides, the executor trades, the portfolio applies** (ADR-022).
@@ -323,7 +324,7 @@ work.
 | File | Written by | Read by | Notes |
 | --- | --- | --- | --- |
 | `runs/current_portfolio.csv` | you | step 2 | `SYMBOL,QUANTITY`, no header |
-| `runs/next_portfolio.csv` | step 12 | you | Copy over `current_portfolio.csv`; it already holds the fills the broker confirmed (ADR-019) |
+| `runs/next_portfolio.csv` | step 12 | you | Copy over `current_portfolio.csv`, by hand or from the console's Promote page (ADR-031); it already holds the fills the broker confirmed (ADR-019) |
 | `runs/cash_ledger.csv` | you, or `ENV_CASHFLOW` | step 2 | `date,amount,note` |
 | `runs/trades_ledger.csv` | every confirmed fill | step 2 | Append-only; filled quantity and the broker's average price (ADR-019) |
 | `runs/strategy_state.json` | step 9, when a rebalance was performed | step 9 | `last_resize_date`; git-ignored like the ledgers, written by the run only, never by hand (ADR-027) |
@@ -335,7 +336,10 @@ The gap between step 12 and the next run's step 2 is deliberate: promoting
 the snapshot is a human act. Since ADR-019 the snapshot records what the
 broker confirmed filled, at the broker's average price, so comparing it with
 the Kite positions page is a check, not a correction. `orders.csv` in the run
-directory has every order id and its verdict if the two disagree.
+directory has every order id and its verdict if the two disagree. The
+console's Promote page puts the diff, those orders and the copy on one
+screen, and offers the copy only for the file the newest completed booking
+run wrote, with no booking run going (ADR-031).
 
 Since ADR-029 nothing under `runs/` is in git: the five files at its root
 are the account's only copy, and cash is reconstructed from them with no

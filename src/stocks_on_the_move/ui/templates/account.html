@@ -28,7 +28,7 @@
 {% endfor %}</ul>
 {% else %}<p class="empty">no completed booking run yet</p>{% endif %}
 
-<h2>Portfolio files</h2>
+<h2>Portfolio files <small><a href="/promote">promote next over current</a></small></h2>
 <div class="columns">
   <div><h3>current <small>{{ files.current }}</small></h3>
   <table class="data narrow"><thead><tr><th>symbol</th><th class="num">quantity</th></tr></thead><tbody>
@@ -43,6 +43,15 @@
 </div>
 
 <h2>Cash ledger <small>{{ files.cash }}</small></h2>
+{% if error %}<p class="warn error"><strong>{{ error }}</strong></p>{% endif %}
+<form method="post" action="/account/cashflow" class="start cashflow">
+  <input type="hidden" name="{{ token_field }}" value="{{ token }}">
+  <label>date <input type="date" name="day" value="{{ today_iso }}"></label>
+  <label>amount <input type="text" name="amount" inputmode="decimal" placeholder="+ deposit, - withdrawal"></label>
+  <label>note <input type="text" name="note" placeholder="deposit"></label>
+  <button type="submit" class="btn paper">Record the cashflow</button>
+</form>
+<p class="meta">Appends one row; nothing is edited. Cash is reconstructed from this ledger and the trades ledger on every run, so a row here changes the next run's cash.</p>
 {% with table=cash_ledger, empty_text='no cash flows' %}{% include "partials/plain_table.html" %}{% endwith %}
 
 <h2>Trades ledger <small>{{ files.trades }} · read-only: cash is reconstructed from it on every run</small></h2>

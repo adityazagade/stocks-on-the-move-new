@@ -35,7 +35,7 @@ process and what needs an ADR; `template.md` is the format.
 | [ADR-028](ADR-028-rank-by-the-regression-slope.md) | Rank by the book's regression slope, on backtest evidence | Rejected | 2026-09-12 |
 | [ADR-029](ADR-029-keep-the-account-state-in-runs-outside-git.md) | Keep the account state at the root of `runs/`, outside git | Implemented | 2026-09-13 |
 | [ADR-030](ADR-030-two-strategies-clenow-and-adm-for-stocks.md) | Two strategies, Clenow's and an ADM adapted to stocks, and no hybrid | Proposed | 2026-09-13 |
-| [ADR-031](ADR-031-a-local-operator-console-over-runs.md) | A local operator console over `runs/` | Accepted | 2026-09-14 |
+| [ADR-031](ADR-031-a-local-operator-console-over-runs.md) | A local operator console over `runs/` | Implemented | 2026-09-14 |
 
 ## Writing a new ADR
 

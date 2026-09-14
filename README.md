@@ -75,7 +75,11 @@ environment would be paper or live, and where `RUNS_DIR` points. The Today
 page shows the weekday guard, the Kite session and the newest run, and
 starts a plan or a booking run as a child of the console, the same command
 with `PLAN_ONLY` set and nothing else; a live environment asks for the word
-`LIVE` first, and the run's log streams onto its page as it goes.
+`LIVE` first, and the run's log streams onto its page as it goes. The
+Promote page shows current against next beside the run's order verdicts
+and copies the file; the Account page records a deposit or withdrawal as
+one cash-ledger row. Those, and starting a run, are the console's only
+writes. The trades ledger is read-only everywhere.
 
 ## Files
 

@@ -1,9 +1,10 @@
 """The console's routes (ADR-031). ``create_app`` builds it over a settings object; ``main`` serves it on loopback.
 
 Every page is a view over ``runs/`` and the settings; the pages never compute a
-strategy number. The one write in this stage is starting the command as a
-child process, in a mode no higher than the environment the console was
-started from allows, behind the token in ``security.py`` and the Host check.
+strategy number. Three writes, each behind the token in ``security.py`` and
+the Host check: start the command as a child process in a mode no higher than
+the environment allows (``launcher.py``), promote the next portfolio, and
+append a cash-ledger row (``writes.py``).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import json
 import sys
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -31,7 +32,7 @@ from stocks_on_the_move.context import ist_now
 from stocks_on_the_move.kite_auth import load_session, session_is_live
 from stocks_on_the_move.ledger import last_resize_date, load_state
 from stocks_on_the_move.settings import Settings, SettingsError
-from stocks_on_the_move.ui import research, security
+from stocks_on_the_move.ui import research, security, writes
 from stocks_on_the_move.ui import runs as runs_mod
 from stocks_on_the_move.ui.launcher import Child, Launcher, LauncherBusy
 from stocks_on_the_move.ui.runs import PORTFOLIO_COLUMNS, TABLE_ORDER, RunInfo, Table
@@ -117,6 +118,11 @@ def create_app(
     def render(request: Request, name: str, status_code: int = 200, **context: Any) -> Response:
         return templates.TemplateResponse(request, name, context, status_code=status_code)
 
+    def require_token(request: Request, form_token: str | None) -> None:
+        presented = form_token if form_token is not None else request.headers.get(security.HEADER)
+        if not security.token_matches(token, presented):
+            raise HTTPException(status_code=403, detail="the console token is missing or wrong")
+
     def get_run(day: str, name: str) -> RunInfo:
         run = runs_mod.load_run(runs_dir, day, name, now())
         if run is None:
@@ -177,9 +183,7 @@ def create_app(
         confirm: Annotated[str, Form()] = "",
         form_token: Annotated[str | None, Form(alias=security.FIELD)] = None,
     ) -> Response:
-        presented = form_token if form_token is not None else request.headers.get(security.HEADER)
-        if not security.token_matches(token, presented):
-            raise HTTPException(status_code=403, detail="the console token is missing or wrong")
+        require_token(request, form_token)
 
         def refuse(status: int, message: str) -> Response:
             return render(request, "today.html", status_code=status, error=message, **today_context())
@@ -268,37 +272,87 @@ def create_app(
             return render(request, "partials/table.html", **context)
         return render(request, "run.html", **context)
 
-    # -- account ----------------------------------------------------------------
-    @app.get("/account", response_class=HTMLResponse)
-    def account_page(request: Request) -> Response:
+    # -- account and the two file writes ----------------------------------------
+    def account_context(error: str = "") -> dict[str, Any]:
         every = runs_mod.list_runs(runs_dir, now())
         newest = runs_mod.newest_booking_run(every)
         series = runs_mod.equity_series(every)
         chart = runs_mod.aligned_chart({mode: {p.date: p.equity for p in pts} for mode, pts in series.items()})
         positions = newest.meta.get("positions_after") if newest else None
         state = load_state(settings.state_file)
-        return render(
-            request,
-            "account.html",
-            nav="account",
-            newest=newest,
-            positions=sorted(positions.items()) if isinstance(positions, dict) else [],
-            series=series,
-            chart_json=_json_for_html(chart),
-            current_pf=runs_mod.read_csv(Path(settings.portfolio_file), PORTFOLIO_COLUMNS, headerless=True),
-            next_pf=runs_mod.read_csv(Path(settings.out_file), PORTFOLIO_COLUMNS, headerless=True),
-            cash_ledger=runs_mod.read_csv(Path(settings.cash_ledger_file)),
-            trades_ledger=runs_mod.read_csv(Path(settings.trades_ledger_file)),
-            state=state,
-            last_resize=last_resize_date(state),
-            files={
+        return {
+            "nav": "account",
+            "error": error,
+            "today_iso": now().date().isoformat(),
+            "newest": newest,
+            "positions": sorted(positions.items()) if isinstance(positions, dict) else [],
+            "series": series,
+            "chart_json": _json_for_html(chart),
+            "current_pf": runs_mod.read_csv(Path(settings.portfolio_file), PORTFOLIO_COLUMNS, headerless=True),
+            "next_pf": runs_mod.read_csv(Path(settings.out_file), PORTFOLIO_COLUMNS, headerless=True),
+            "cash_ledger": runs_mod.read_csv(Path(settings.cash_ledger_file)),
+            "trades_ledger": runs_mod.read_csv(Path(settings.trades_ledger_file)),
+            "state": state,
+            "last_resize": last_resize_date(state),
+            "files": {
                 "current": settings.portfolio_file,
                 "next": settings.out_file,
                 "cash": settings.cash_ledger_file,
                 "trades": settings.trades_ledger_file,
                 "state": settings.state_file,
             },
-        )
+        }
+
+    @app.get("/account", response_class=HTMLResponse)
+    def account_page(request: Request) -> Response:
+        return render(request, "account.html", **account_context())
+
+    @app.post("/account/cashflow", response_class=HTMLResponse)
+    def cashflow_action(
+        request: Request,
+        amount: Annotated[str, Form()] = "",
+        note: Annotated[str, Form()] = "",
+        day: Annotated[str, Form()] = "",
+        form_token: Annotated[str | None, Form(alias=security.FIELD)] = None,
+    ) -> Response:
+        require_token(request, form_token)
+        try:
+            when = date.fromisoformat(day) if day.strip() else now().date()
+            writes.record_cashflow(Path(settings.cash_ledger_file), when, amount, note)
+        except ValueError as exc:
+            return render(request, "account.html", status_code=400, **account_context(error=f"Not recorded: {exc}"))
+        return RedirectResponse("/account", status_code=303)
+
+    def promote_context(*, done: bool = False, error: str = "") -> dict[str, Any]:
+        every = runs_mod.list_runs(runs_dir, now())
+        newest = runs_mod.newest_booking_run(every)
+        current, following = Path(settings.portfolio_file), Path(settings.out_file)
+        return {
+            "nav": "promote",
+            "done": done,
+            "error": error,
+            "rows": writes.portfolio_diff(current, following),
+            "check": writes.promotion_check(current, following, every),
+            "newest": newest,
+            "orders": runs_mod.read_table(newest, "orders") if newest else None,
+            "files": {"current": settings.portfolio_file, "next": settings.out_file},
+        }
+
+    @app.get("/promote", response_class=HTMLResponse)
+    def promote_page(request: Request, done: bool = False) -> Response:
+        return render(request, "promote.html", **promote_context(done=done))
+
+    @app.post("/promote", response_class=HTMLResponse)
+    def promote_action(
+        request: Request, form_token: Annotated[str | None, Form(alias=security.FIELD)] = None
+    ) -> Response:
+        require_token(request, form_token)
+        current, following = Path(settings.portfolio_file), Path(settings.out_file)
+        check = writes.promotion_check(current, following, runs_mod.list_runs(runs_dir, now()))
+        if not check.allowed:
+            return render(request, "promote.html", status_code=409, **promote_context(error=check.reason))
+        writes.promote(current, following)
+        return RedirectResponse("/promote?done=true", status_code=303)
 
     # -- research ---------------------------------------------------------------
     @app.get("/research", response_class=HTMLResponse)

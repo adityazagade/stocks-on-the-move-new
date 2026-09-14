@@ -14,7 +14,7 @@ import json
 import os
 import shutil
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from stocks_on_the_move.context import IST
 from stocks_on_the_move.kite_auth import SessionRecord
+from stocks_on_the_move.ledger import append_cashflow
 from stocks_on_the_move.reporting import EXIT_COLUMNS
 from stocks_on_the_move.ui import runs as runs_mod
 from stocks_on_the_move.ui.app import create_app, main, parse_args
@@ -239,7 +240,7 @@ def runs_tree(tmp_path) -> Path:
 @pytest.fixture
 def client(make_settings, runs_tree) -> TestClient:
     settings = make_settings(state_files=False, runs_dir=runs_tree)
-    return TestClient(create_app(settings, now=lambda: NOW, allowed_hosts=["testserver"]))
+    return TestClient(create_app(settings, now=lambda: NOW, allowed_hosts=["testserver"], token="tok"))
 
 
 def _rows(path: Path) -> list[dict[str, str]]:
@@ -612,3 +613,165 @@ def test_the_rail_polls_while_a_run_is_running_and_rests_after(client):
     assert "new EventSource('/runs/2026-09-14/113000-paper/log/stream?skip=1')" in page
     done = client.get(f"/runs/{NEWEST}/log").text
     assert "hx-trigger" not in done and "EventSource" not in done
+
+
+# ── stage three: promote and the cashflow row, the only two file writes ──────
+WRITE_CALLS = {
+    "open",
+    "write_text",
+    "write_bytes",
+    "copy",
+    "copyfile",
+    "copy2",
+    "move",
+    "rename",
+    "unlink",
+    "rmtree",
+    "mkdir",
+    "utime",
+    "append_cashflow",
+    "_append_row",
+    "save_state",
+    "write_portfolio",
+}
+
+
+def _callee(node: ast.Call) -> str:
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    return ""
+
+
+def _open_mode(node: ast.Call) -> str:
+    if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+        return str(node.args[1].value)
+    for kw in node.keywords:
+        if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
+            return str(kw.value.value)
+    return "r"
+
+
+def test_every_file_write_under_ui_lives_in_the_writes_module():
+    """ADR-031: promote and the cashflow row are the only file writes, and the trades ledger is never named there."""
+    for py in sorted(UI_DIR.rglob("*.py")):
+        if py.name == "writes.py":
+            continue
+        for node in ast.walk(ast.parse(py.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _callee(node)
+            if name == "open":
+                assert not set(_open_mode(node)) & set("wax+"), f"{py.name} opens a file for writing"
+            else:
+                assert name not in WRITE_CALLS, f"{py.name} calls {name}()"
+    writes_source = (UI_DIR / "writes.py").read_text()
+    assert "trades" not in writes_source.lower()
+
+
+def _ledger_bytes(runs_tree: Path) -> tuple[bytes, bytes]:
+    return (runs_tree / "trades_ledger.csv").read_bytes(), (runs_tree / "cash_ledger.csv").read_bytes()
+
+
+@pytest.fixture
+def settled(runs_tree) -> Path:
+    """The fixture tree with the running booking run finished, and current older than next, so a promote is due."""
+    running = runs_tree / "2026-09-14" / "113000-paper" / "run.json"
+    meta = json.loads(running.read_text())
+    meta.update(status="aborted:empty_universe", finished="2026-09-14T11:31:00+05:30")
+    running.write_text(json.dumps(meta))
+    old = (NOW - timedelta(days=7)).timestamp()
+    os.utime(runs_tree / "current_portfolio.csv", (old, old))
+    return runs_tree
+
+
+def test_promote_page_shows_the_diff_and_the_orders_of_the_newest_booking_run(client, settled):
+    html = client.get("/promote").text
+    current = _positions(GOLDEN / "portfolio_before.csv")
+    following = _positions(EXPECTED / "portfolio_after.csv")
+    for sym in set(current) | set(following):
+        assert f"<td>{sym}</td>" in html
+    closed = [s for s in current if s not in following]
+    new = [s for s in following if s not in current]
+    assert closed and new
+    assert html.count('class="change-closed"') == len(closed)
+    assert html.count('class="change-new"') == len(new)
+    assert html.count('class="change-same"') == len([s for s in current if following.get(s) == current[s]])
+    assert "FAKE-0001" in html and ">COMPLETE<" in html  # the run's orders beside the diff
+    assert 'action="/promote"' in html and "Promote: copy next over current" in html
+    assert f"/runs/{NEWEST}" in html
+
+
+def test_promote_copies_the_bytes_once_and_then_has_nothing_to_offer(client, settled):
+    before = _ledger_bytes(settled)
+    response = client.post("/promote", data={"_token": "tok"}, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/promote?done=true"
+    assert (settled / "current_portfolio.csv").read_bytes() == (settled / "next_portfolio.csv").read_bytes()
+    assert _ledger_bytes(settled) == before
+    html = client.get("/promote", params={"done": "true"}).text
+    assert "Promoted." in html
+    assert "nothing new to promote" in html and 'action="/promote"' not in html
+    assert client.post("/promote", data={"_token": "tok"}).status_code == 409
+
+
+def test_promote_is_refused_without_the_token_or_while_a_booking_run_is_going(client, runs_tree):
+    original = (runs_tree / "current_portfolio.csv").read_bytes()
+    assert client.post("/promote", data={}).status_code == 403
+    # the fixture tree has a paper run still running: not offered, and the POST is refused
+    page = client.get("/promote").text
+    assert "a booking run is going" in page and 'action="/promote"' not in page
+    assert client.post("/promote", data={"_token": "tok"}).status_code == 409
+    assert (runs_tree / "current_portfolio.csv").read_bytes() == original
+
+
+def test_promote_is_refused_when_next_is_not_what_the_newest_run_wrote(client, settled):
+    (settled / "next_portfolio.csv").write_text("ANCHOR,1\n")
+    page = client.get("/promote").text
+    assert "is not what the newest completed booking run" in page
+    assert client.post("/promote", data={"_token": "tok"}).status_code == 409
+    assert (settled / "current_portfolio.csv").read_bytes() == (GOLDEN / "portfolio_before.csv").read_bytes()
+
+
+def test_a_cashflow_row_is_appended_through_the_ledger_module(client, runs_tree):
+    trades_before, cash_before = _ledger_bytes(runs_tree)
+    response = client.post(
+        "/account/cashflow",
+        data={"_token": "tok", "amount": "25,000", "note": "  September deposit ", "day": ""},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303 and response.headers["location"] == "/account"
+    trades_after, cash_after = _ledger_bytes(runs_tree)
+    assert trades_after == trades_before
+    assert cash_after == cash_before + b"2026-09-14,25000.00,September deposit\r\n"
+    dated = client.post(
+        "/account/cashflow",
+        data={"_token": "tok", "amount": "-1500.5", "note": "withdrawal", "day": "2026-09-12"},
+        follow_redirects=False,
+    )
+    assert dated.status_code == 303
+    assert (runs_tree / "cash_ledger.csv").read_bytes().endswith(b"2026-09-12,-1500.50,withdrawal\r\n")
+    html = client.get("/account").text
+    assert ">September deposit<" in html and ">-1500.50<" in html and 'value="2026-09-14"' in html
+
+
+def test_a_bad_cashflow_is_refused_and_writes_nothing(client, runs_tree):
+    before = _ledger_bytes(runs_tree)
+    for fields in (
+        {"amount": "abc", "note": "x"},
+        {"amount": "0", "note": "x"},
+        {"amount": "100", "note": "   "},
+        {"amount": "100", "note": "x", "day": "yesterday"},
+        {"amount": "inf", "note": "x"},
+    ):
+        response = client.post("/account/cashflow", data={"_token": "tok", **fields})
+        assert response.status_code == 400, fields
+        assert "Not recorded" in response.text
+    assert client.post("/account/cashflow", data={"amount": "100", "note": "x"}).status_code == 403
+    assert _ledger_bytes(runs_tree) == before
+
+
+def test_append_cashflow_creates_the_ledger_with_its_header(tmp_path):
+    path = tmp_path / "cash_ledger.csv"
+    append_cashflow(str(path), date(2026, 9, 14), 250000, "seed")
+    assert path.read_bytes() == b"date,amount,note\r\n2026-09-14,250000.00,seed\r\n"

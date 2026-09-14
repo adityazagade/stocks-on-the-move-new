@@ -96,3 +96,11 @@ body.mode-kill .band { background: #7f1d1d; }
 pre.log.child { max-height: 40vh; }
 pre.log a { color: #93c5fd; }
 .warn.error { border-left-color: var(--live); background: #fee2e2; }
+
+/* promote and cashflow (stage three) */
+.warn.ok { border-left-color: var(--ok); background: #ecfdf5; }
+tr.change-new td { background: #ecfdf5; }
+tr.change-closed td { background: #fee2e2; }
+tr.change-changed td { background: var(--warn-bg); }
+.cashflow label { display: inline-flex; align-items: center; gap: 6px; }
+.cashflow input { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; }

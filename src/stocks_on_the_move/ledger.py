@@ -64,13 +64,18 @@ def _append_row(path: str, row: Sequence[Any]) -> None:
         csv.writer(f).writerow(row)
 
 
+def append_cashflow(path: str, day: date, amount: float, note: str) -> None:
+    """Append one dated deposit (+) or withdrawal (-) row; ENV_CASHFLOW and the console's form share it (ADR-031)."""
+    _ensure_csv(path, ["date", "amount", "note"])
+    _append_row(path, [day.isoformat(), f"{amount:.2f}", note])
+
+
 def append_env_cashflow_if_any(ctx: RunContext) -> None:
     """If ENV_CASHFLOW!=0, append a dated row to cash ledger for today."""
     s = ctx.settings
     if abs(s.env_cashflow) < 1e-9:
         return
-    _ensure_csv(s.cash_ledger_file, ["date", "amount", "note"])
-    _append_row(s.cash_ledger_file, [ctx.now().date().isoformat(), f"{s.env_cashflow:.2f}", s.cashflow_note])
+    append_cashflow(s.cash_ledger_file, ctx.now().date(), s.env_cashflow, s.cashflow_note)
     logger.info("Applied ENV_CASHFLOW: %+.2f (%s)", s.env_cashflow, s.cashflow_note)
 
 
