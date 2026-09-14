@@ -36,7 +36,7 @@ from stocks_on_the_move.pipeline import (
 )
 from stocks_on_the_move.reporting import EXIT_COLUMNS, SIZING_COLUMNS
 from stocks_on_the_move.rules import RankItem
-from stocks_on_the_move.universe import StaticUniverse
+from stocks_on_the_move.universe import NO_BANDS, PriceBands, StaticUniverse
 
 TODAY = EVEN_WEEK_WEDNESDAY.date()
 NIFTY = Instrument(256265, "NIFTY 50", "NSE", "INDICES", "EQ")
@@ -752,3 +752,40 @@ def test_a_plan_on_an_absent_runs_dir_leaves_only_its_run_directory(make_context
     assert ctx.portfolio.positions != {}  # it decided
     written = sorted(p.name for p in fresh.iterdir())
     assert written == sorted({ctx.artifacts.path.parent.name, "latest"})
+
+
+# ── ADR-034: the price bands reach the run ───────────────────────────────
+
+
+def test_the_run_resolves_the_price_bands_through_nse_when_none_are_injected(make_context, monkeypatch):
+    """The tripwire: a context with no lookup reaches the live source, never a permissive default."""
+    asked = []
+
+    class StubSource:
+        def __init__(self, settings):
+            asked.append(settings)
+
+        def bands(self):
+            return PriceBands({("AAA", "EQ"): 2.0}, TODAY, "fresh")
+
+    monkeypatch.setattr(m, "NsePriceBands", StubSource)
+    ctx = make_context(bull_market(DRIFTS), cut_off_pct=0.5, artifacts=True)
+    ctx.universe = StaticUniverse(DRIFTS)
+    ctx.bands = None  # the fixture injects the permissive lookup; a live context has none
+
+    run(ctx)
+
+    assert asked == [ctx.settings] and ctx.bands is not None and ctx.bands.source == "fresh"
+    meta = json.loads((ctx.artifacts.path / "run.json").read_text())
+    assert meta["price_bands"] == {"source": "fresh", "as_of": TODAY.isoformat(), "names": 1}
+
+
+def test_an_injected_band_lookup_is_used_as_it_is_and_recorded(make_context):
+    ctx = make_context(bull_market(DRIFTS), cut_off_pct=0.5, artifacts=True)
+    ctx.universe = StaticUniverse(DRIFTS)
+    assert ctx.bands is NO_BANDS  # what the fixture gives every test
+
+    run(ctx)
+
+    meta = json.loads((ctx.artifacts.path / "run.json").read_text())
+    assert meta["price_bands"] == {"source": "static", "as_of": None, "names": 0}

@@ -25,7 +25,7 @@ from stocks_on_the_move.settings import Settings
 
 if TYPE_CHECKING:
     from stocks_on_the_move.execution import Executor
-    from stocks_on_the_move.universe import UniverseSource
+    from stocks_on_the_move.universe import PriceBands, UniverseSource
 
 # Timezone: run scheduling and the rebalance cadence in IST
 IST = ZoneInfo("Asia/Kolkata")
@@ -127,7 +127,10 @@ class RunContext:
     tests pass a no-op. ``snapshots`` is filled once per run by the pipeline's
     gather step (ADR-021); ``params`` overrides the parameters built from the
     settings, for a backtest's variants; ``executor`` overrides the one the
-    settings imply, the broker's or the plan's (ADR-022).
+    settings imply, the broker's or the plan's (ADR-022). ``bands`` is the
+    price-band lookup the entry rules read (ADR-034): ``None`` means NSE's
+    daily list with its last-good copy, which ``run`` resolves once; tests
+    and the backtest inject a static lookup.
     """
 
     settings: Settings
@@ -143,6 +146,7 @@ class RunContext:
     snapshots: dict[str, Snapshot] = field(default_factory=dict)  # symbol -> what the rules read (ADR-021)
     params: StrategyParams | None = None
     executor: Executor | None = None
+    bands: PriceBands | None = None  # the price bands (ADR-034); None is NSE's list, resolved by the run
 
 
 def strategy_params(ctx: RunContext) -> StrategyParams:

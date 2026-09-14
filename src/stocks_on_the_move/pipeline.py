@@ -67,9 +67,14 @@ from stocks_on_the_move.rules import (
     size,
     unrankable,
 )
-from stocks_on_the_move.universe import NseArchives, get_universe
+from stocks_on_the_move.universe import NO_BANDS, NseArchives, NsePriceBands, PriceBands, get_universe
 
 logger = logging.getLogger(__name__)
+
+
+def price_bands(ctx: RunContext) -> PriceBands:
+    """The run's price bands: what ``run`` resolved or a test injected; permissive before either (ADR-034)."""
+    return ctx.bands if ctx.bands is not None else NO_BANDS
 
 
 # ── gathering: the one place the candle store is read (ADR-021) ──────────
@@ -499,7 +504,17 @@ def run(ctx: RunContext) -> None:
     logger.info("Index %.2f vs 200-day MA %.2f → %s", trend.last, trend.ma200, "BULL" if bull else "BEAR")
     art.record(regime={"index_close": trend.last, "ma200": trend.ma200, "bull": bull})
 
-    # 6) Gather one snapshot per instrument and holding, evaluate, rank
+    # 6) The price bands (ADR-034): the context's, else NSE's list with its last-good copy, resolved once
+    if ctx.bands is None:
+        ctx.bands = NsePriceBands(s).bands()
+    art.record(
+        price_bands={
+            "source": ctx.bands.source,
+            "as_of": ctx.bands.as_of.isoformat() if ctx.bands.as_of else None,
+            "names": len(ctx.bands.bands),
+        }
+    )
+    # then one snapshot per instrument and holding, evaluate, rank
     universe = get_universe(ctx, symbols)
     ranks = rank_step(ctx, universe)
     for r in ranks[:20]:

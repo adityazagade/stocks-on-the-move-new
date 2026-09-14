@@ -1,19 +1,26 @@
-"""The symbols the strategy may hold (ADR-020).
+"""The symbols the strategy may hold, and what the exchange lets it open (ADR-020, ADR-034).
 
 NSE series codes and their parsing, the instrument filter that turns a list
-of base symbols into Kite instruments, and the ``UniverseSource`` protocol
-with its two implementations: a fixed set, and the NSE archives fetch with a
-last-good copy under the cache directory.
+of base symbols into Kite instruments, the ``UniverseSource`` protocol with
+its two implementations — a fixed set, and the NSE archives fetch with a
+last-good copy under the cache directory — and, on the same pattern, NSE's
+daily price-band list, which says which names may be opened (ADR-034).
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
+import math
 import time
-from collections.abc import Callable, Iterable
-from datetime import date
+import urllib.error
+import urllib.request
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 import pandas as pd
 
@@ -48,6 +55,10 @@ SERIES_CODES: set[str] = {
 
 
 NO_MARKET_SERIES = {"BE", "BZ", "BT", "IL", "IQ", "SM", "ST"}
+
+# Trade-for-trade because the issuer failed its listing obligations, not because the exchange put it under
+# surveillance: BZ on the main board, SZ on the SME platform (ADR-034). Never opened; BE is not in this set.
+NON_COMPLIANT_SERIES = {"BZ", "SZ"}
 
 
 def series_of(ts: str) -> str:
@@ -213,3 +224,186 @@ class NseArchives:
             logger.warning("Ignoring the universe copy at %s: unreadable date line", self.copy_path)
             return None
         return saved_on, {line.strip().upper() for line in body.splitlines() if line.strip()}
+
+
+# ── the price bands: what the exchange lets us open (ADR-034) ────────────
+BandSource = Literal["fresh", "copy", "fallback", "static"]
+BandTable = dict[tuple[str, str], float]
+
+
+@dataclass(frozen=True)
+class PriceBands:
+    """The operative daily price band per ``(symbol, series)``, in percent, from NSE's ``sec_list`` (ADR-034).
+
+    ``math.inf`` is "No Band", the F&O names. ``as_of`` is the date of the file
+    the bands came from and ``source`` the rung that produced them: ``fresh``
+    from the archive, ``copy`` from the last-good file under the cache
+    directory, ``fallback`` when neither could be had and the rules stand in
+    with the series, or ``static`` for a lookup a test or a backtest supplied.
+    """
+
+    bands: Mapping[tuple[str, str], float]
+    as_of: date | None
+    source: BandSource
+
+    @property
+    def fallback(self) -> bool:
+        return self.source == "fallback"
+
+    def band_of(self, tradingsymbol: str) -> float | None:
+        """The band for a Kite tradingsymbol, matched on base symbol and series; ``None`` when unknown.
+
+        When the exact pair is missing — Kite and the list can disagree on the
+        series for a day around a transfer — the symbol alone decides if it
+        names exactly one row.
+        """
+        symbol = base_symbol(tradingsymbol)
+        exact = self.bands.get((symbol, series_of(tradingsymbol)))
+        if exact is not None:
+            return exact
+        matches = [band for (sym, _), band in self.bands.items() if sym == symbol]
+        return matches[0] if len(matches) == 1 else None
+
+
+NO_BANDS = PriceBands({}, None, "static")  # permissive: nothing is banded and nothing falls back to the series
+
+BAND_URL = "https://nsearchives.nseindia.com/content/equities/sec_list_{ddmmyyyy}.csv"
+BAND_WALKBACK_DAYS = 7  # the run date's file appears after the day: a Monday reaches Friday, a long weekend further
+BAND_STALE_DAYS = 10  # one weekly surveillance review plus a run's grace: the file is daily and the run weekly
+_FETCH_TIMEOUT = 15.0
+# NSE's archive holds a connection from Python's default agent open indefinitely; a browser's returns at once.
+_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+)
+_BAND_HEADER = "# as of "
+
+
+def fetch_text(url: str) -> str:
+    """The body at ``url`` as text; ``urllib.error.HTTPError`` on a 404, ``URLError`` or ``OSError`` on transport."""
+    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT, "Accept": "text/csv,*/*"})
+    with urllib.request.urlopen(request, timeout=_FETCH_TIMEOUT) as response:
+        return response.read().decode("utf-8-sig")
+
+
+def parse_bands(text: str) -> BandTable:
+    """``(symbol, series) -> band`` from the list's CSV; "No Band" is ``inf``, an unreadable band skips its row."""
+    out: BandTable = {}
+    for raw in csv.DictReader(io.StringIO(text)):
+        row = {(key or "").strip(): (value or "").strip() for key, value in raw.items()}
+        symbol, series, band = row.get("Symbol", "").upper(), row.get("Series", "").upper(), row.get("Band", "")
+        if not symbol or not series:
+            continue
+        if band.lower().startswith("no band"):
+            out[(symbol, series)] = math.inf
+            continue
+        try:
+            out[(symbol, series)] = float(band)
+        except ValueError:
+            logger.debug("Price-band row for %s-%s has no readable band (%r); skipped", symbol, series, band)
+    return out
+
+
+def fetch_price_bands(today: date, *, get: Callable[[str], str] = fetch_text) -> tuple[date, BandTable] | None:
+    """The most recent ``sec_list`` within ``BAND_WALKBACK_DAYS`` of ``today``, with its date; ``None`` when none came.
+
+    A 404 is a weekend, a holiday or a file not yet published, and the walk
+    goes on to the day before. Any other failure is the network, not the
+    date, so the walk stops there and the caller falls back to its copy.
+    """
+    for back in range(BAND_WALKBACK_DAYS + 1):
+        day = today - timedelta(days=back)
+        url = BAND_URL.format(ddmmyyyy=day.strftime("%d%m%Y"))
+        try:
+            text = get(url)
+        except urllib.error.HTTPError as exc:
+            logger.debug("No price-band file for %s (HTTP %s)", day, exc.code)
+            continue
+        except Exception as exc:
+            logger.warning("Price-band fetch for %s failed (%s: %s)", day, type(exc).__name__, exc)
+            return None
+        bands = parse_bands(text)
+        if bands:
+            return day, bands
+        logger.warning("Price-band file for %s held no readable rows", day)
+    return None
+
+
+class NsePriceBands:
+    """NSE's daily price-band list, with a last-good copy under the cache directory (ADR-034).
+
+    A fetch that succeeds writes the list to ``<CACHE_DIR>/price-bands.csv``
+    with the file's own date on its first line. A fetch that fails uses that
+    copy with a WARNING naming its age, and a second WARNING past
+    ``BAND_STALE_DAYS``. With no copy either, the result is the ``fallback``
+    rung: the rules stand in with the series and the run goes on.
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        fetch: Callable[[date], tuple[date, BandTable] | None] = fetch_price_bands,
+        today: Callable[[], date] = lambda: ist_now().date(),
+    ) -> None:
+        self._settings = settings
+        self._fetch = fetch
+        self._today = today
+
+    @property
+    def copy_path(self) -> Path:
+        return Path(self._settings.cache_dir) / "price-bands.csv"
+
+    def bands(self) -> PriceBands:
+        today = self._today()
+        fresh = self._fetch(today)
+        if fresh is not None:
+            as_of, bands = fresh
+            self._save(as_of, bands)
+            logger.info("Price bands: %d names as of %s", len(bands), as_of)
+            return PriceBands(bands, as_of, "fresh")
+        saved = self._load()
+        if saved is None:
+            logger.error(
+                "NSE price bands unreachable and no saved copy at %s; the series stands in for the band this run",
+                self.copy_path,
+            )
+            return PriceBands({}, None, "fallback")
+        as_of, bands = saved
+        age = (today - as_of).days
+        logger.warning(
+            "NSE price bands unreachable; using the %d names saved as of %s (%d days old)", len(bands), as_of, age
+        )
+        if age > BAND_STALE_DAYS:
+            logger.warning("That copy is more than %d days old; a name banded since is not in it", BAND_STALE_DAYS)
+        return PriceBands(bands, as_of, "copy")
+
+    def _save(self, as_of: date, bands: Mapping[tuple[str, str], float]) -> None:
+        try:
+            self.copy_path.parent.mkdir(parents=True, exist_ok=True)
+            lines = [f"{_BAND_HEADER}{as_of.isoformat()}", "symbol,series,band"]
+            lines += [f"{symbol},{series},{band}" for (symbol, series), band in sorted(bands.items())]
+            self.copy_path.write_text("\n".join(lines) + "\n")
+        except OSError as exc:
+            logger.warning("Could not save the price-band copy to %s (%s)", self.copy_path, exc)
+
+    def _load(self) -> tuple[date, BandTable] | None:
+        try:
+            text = self.copy_path.read_text()
+        except OSError:
+            return None
+        head, _, body = text.partition("\n")
+        if not head.startswith(_BAND_HEADER):
+            logger.warning("Ignoring the price-band copy at %s: no date line", self.copy_path)
+            return None
+        try:
+            as_of = date.fromisoformat(head[len(_BAND_HEADER) :].strip())
+        except ValueError:
+            logger.warning("Ignoring the price-band copy at %s: unreadable date line", self.copy_path)
+            return None
+        bands: BandTable = {}
+        for row in csv.DictReader(io.StringIO(body)):
+            try:
+                bands[(row["symbol"], row["series"])] = float(row["band"])
+            except (KeyError, TypeError, ValueError):
+                continue
+        return as_of, bands

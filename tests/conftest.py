@@ -21,6 +21,7 @@ from stocks_on_the_move.broker import Broker
 from stocks_on_the_move.candles import CandleStore
 from stocks_on_the_move.context import RunContext
 from stocks_on_the_move.settings import Settings
+from stocks_on_the_move.universe import NO_BANDS
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -97,7 +98,15 @@ def make_context(make_settings) -> Callable[..., RunContext]:
         candles = CandleStore(
             broker, s.cache_dir, sleep_sec=s.candle_sleep_sec, sleep=lambda _: None, today=lambda: clock().date()
         )
-        ctx = RunContext(settings=s, broker=broker, candles=candles, now=clock, paper=True, sleep=lambda _: None)
+        ctx = RunContext(
+            settings=s,
+            broker=broker,
+            candles=candles,
+            now=clock,
+            paper=True,
+            sleep=lambda _: None,
+            bands=NO_BANDS,  # a static, permissive lookup, as StaticUniverse stands in for the archives (ADR-034)
+        )
         if artifacts:  # a real run directory under the test's runs_dir (ADR-006)
             ctx.artifacts = RunArtifacts.create(s.runs_dir, started=clock(), mode=m.run_mode(s), settings=s)
         return ctx

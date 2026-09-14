@@ -52,7 +52,7 @@ from stocks_on_the_move.momentum import authenticate
 from stocks_on_the_move.params import StrategyParams
 from stocks_on_the_move.pipeline import run
 from stocks_on_the_move.settings import Settings, SettingsError
-from stocks_on_the_move.universe import NseArchives, StaticUniverse, base_symbol
+from stocks_on_the_move.universe import NO_BANDS, NseArchives, StaticUniverse, base_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -420,6 +420,7 @@ def simulate(bt: Backtest, out_dir: Path) -> dict[str, Any]:
             artifacts=recorder,
             sleep=lambda _: None,
             params=bt.params,
+            bands=NO_BANDS,  # today's band list applied to history would be look-ahead; the rule is off (ADR-034)
         )
         with quiet():
             run(ctx)
